@@ -20,8 +20,8 @@ import {
 } from './inventory.svelte';
 import { canStack, findAvailableSlot, getTargetInventory, isSlotWithItem } from './helpers';
 import { fetchNui } from './nui';
-import { items as itemDefs } from './state.svelte';
-import { openGivePicker, type GiveTarget } from './ui.svelte';
+import { items as itemDefs, locale } from './state.svelte';
+import { openCountPrompt, openGivePicker, type GiveTarget } from './ui.svelte';
 
 /**
  * Is this bag the one whose contents are on screen?
@@ -50,6 +50,45 @@ const isOpenBag = (containerId: unknown): boolean =>
  * a count read at drop time, and a refreshSlots can land between the release and the
  * confirmation.
  */
+/**
+ * Put an item on the ground, asking how many first when there is a choice to make.
+ *
+ * ONE IMPLEMENTATION, TWO CALLERS -- the right-click menu and the control column's DROP target.
+ * It was written inside `ContextMenu.svelte`, and the moment the second caller appeared it would
+ * have been copied: two readings of "ask when there is more than one" drift the first time either
+ * side changes its mind about what counts as one.
+ *
+ * A stack of one has nothing to ask about, and asking anyway would be a dialog whose only honest
+ * answer is already selected.
+ */
+export function dropToGround(slot: number): void {
+  /*
+   * The SLOT NUMBER, not the item, and this is not tidiness.
+   *
+   * A `DragSource` carries `Pick<SlotWithItem, 'slot' | 'name'>` -- no count and no metadata --
+   * so a version of this taking the caller's object would read `undefined` for the count from the
+   * control column, decide there was nothing to ask about, and put the whole stack on the floor.
+   * Reading the live slot here also answers the warning `onDrop` carries below: the count is read
+   * at drop time, and a `refreshSlots` can land between the release and the confirmation.
+   */
+  const held = inv.leftInventory.items[slot - 1];
+  if (!isSlotWithItem(held)) return;
+
+  const source = { inventory: InventoryType.PLAYER, item: { name: held.name, slot: held.slot } };
+
+  if ((held.count ?? 0) <= 1) return void onDrop(source);
+
+  const label = held.metadata?.label || itemDefs[held.name]?.label || held.name || '';
+
+  openCountPrompt(
+    label,
+    locale.ui_drop || 'Drop',
+    locale.ui_drop_blurb || 'On the ground, where you stand.',
+    held.count,
+    (amount) => onDrop(source, undefined, amount),
+  );
+}
+
 export function onDrop(
   source: DragSource,
   target?: DropTarget,

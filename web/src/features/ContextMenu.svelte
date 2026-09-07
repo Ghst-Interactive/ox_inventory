@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { onDrop, onGive, onUse } from '../lib/actions';
+  import { dropToGround, onGive, onUse } from '../lib/actions';
   import { fetchNui } from '../lib/nui';
   import { anchored } from '../lib/position';
   import { isPinned, pinnable, togglePin } from '../lib/pins.svelte';
   import { items as itemDefs, locale } from '../lib/state.svelte';
-  import { closeContextMenu, contextMenu, openCountPrompt, openWeaponPanel } from '../lib/ui.svelte';
+  import { closeContextMenu, contextMenu, openWeaponPanel } from '../lib/ui.svelte';
   import { setClipboard } from '../utils/setClipboard';
   import { InventoryType } from '../typings';
 
@@ -68,28 +68,6 @@
   const entries = $derived.by<Entry[]>(() => {
     if (!item) return [];
 
-    /**
-     * Drop asks how many, through the same `CountControl` Split uses — but only when
-     * there is a choice to make. A stack of one has nothing to ask about, and asking
-     * anyway would be a dialog with one honest answer already selected.
-     */
-    const dropAll = () =>
-      onDrop({ inventory: InventoryType.PLAYER, item: { name: item.name, slot: item.slot } });
-
-    const runDrop = () => {
-      if ((item.count ?? 0) <= 1) return dropAll();
-
-      const label = item.metadata?.label || itemDefs[item.name!]?.label || item.name || '';
-
-      openCountPrompt(
-        label,
-        locale.ui_drop || 'Drop',
-        locale.ui_drop_blurb || 'On the ground, where you stand.',
-        item.count!,
-        (amount) => onDrop({ inventory: InventoryType.PLAYER, item: { name: item.name, slot: item.slot } }, undefined, amount),
-      );
-    };
-
     /*
      * THREE GROUPS, AND THE DIVIDERS ARE THE ONLY THING SAYING SO.
      *
@@ -116,7 +94,7 @@
     const list: Entry[] = [
       { label: locale.ui_use || 'Use', run: () => onUse(item) },
       { label: locale.ui_give || 'Give', run: () => onGive(item) },
-      { label: locale.ui_drop || 'Drop', run: runDrop },
+      { label: locale.ui_drop || 'Drop', run: () => dropToGround(item.slot) },
     ];
 
     /** Group 2 opens at whichever of these the item happens to have. */

@@ -117,8 +117,53 @@
   // six-slot crafting bench free of both.
   const chipped = $derived(inventory.slots > SEARCH_THRESHOLD && present.length > 1);
 
+  /** What `All` counts: things in the pane, not squares. Wrapped rather than passed by name,
+      for the `strict`-flag reason spelled out over `filled` below. */
+  const itemCount = $derived(inventory.items.filter((slot) => isSlotWithItem(slot)).length);
+
   const chipLabel = (name: string) =>
     locale[`ui_cat_${name}`] || name.charAt(0).toUpperCase() + name.slice(1);
+
+  /**
+   * WHAT KIND OF PANE THIS IS, over the name of the one you are looking at.
+   *
+   * `Panel`'s rule, in its own words: *an eyebrow names the kind and a title names the instance*.
+   * Every pane here was drawing the instance alone -- "Bob Smith", "Storage", and, for a boot, a
+   * bare number plate, because `server.lua` sets `trunk.label` to the plate. A player reading
+   * `GHST 001` at the top of a pane full of jerry cans has to work out from the contents which
+   * car they are standing behind.
+   *
+   * The kind comes from `inventory.type`, which Lua already sends and nothing else on the screen
+   * spends. An unmapped type draws NO eyebrow rather than its own slug: `policeevidence` over a
+   * pane is worse than nothing, and a resource can register any type it likes.
+   */
+  const KINDS: Record<string, string> = {
+    stash: 'Stash',
+    shop: 'Shop',
+    crafting: 'Crafting',
+    container: 'Bag',
+    trunk: 'Boot',
+    glovebox: 'Glovebox',
+    drop: 'Ground',
+    newdrop: 'Ground',
+    dumpster: 'Dumpster',
+  };
+
+  /**
+   * `player` is two different panes. The left one is you; the right one is somebody whose pockets
+   * you are looking through, and calling that "Yours" would be the single most misleading word on
+   * the screen. Told apart by identity rather than by the `container` flag, which answers a
+   * different question.
+   */
+  const kind = $derived.by(() => {
+    if (inventory.type === InventoryType.PLAYER) {
+      return inventory.id === inv.leftInventory.id
+        ? locale.ui_kind_yours || 'Yours'
+        : locale.ui_kind_player || 'Player';
+    }
+
+    return locale[`ui_kind_${inventory.type}`] || KINDS[inventory.type];
+  });
 
   /**
    * A CATALOGUE PANE MAY HIDE; A PLACE MAY ONLY DIM.
@@ -281,7 +326,7 @@
 </script>
 
 <div class="w-bag">
-<Panel title={inventory.label ?? ''} scroll={false}>
+<Panel eyebrow={kind} title={inventory.label ?? ''} scroll={false}>
   {#snippet actions()}
     <!-- One row of icon-only ghost buttons, pinned right by Panel's own header layout —
          no more hand-rolled auto-margin box for them to share. -->
@@ -352,13 +397,42 @@
   {/if}
 
   {#if chipped}
-    <div class="chips">
+    <!--
+      A RADIO GROUP, AND NOT `SegmentedNav` -- which was tried here and does not fit.
+      Written down because the inconsistency is the sort somebody arrives to correct.
+
+      `All` is the half worth keeping and is new: the row used to clear by pressing the active
+      chip a second time, which is a way back that nothing on screen advertised. A chip that says
+      so, carrying the pane's whole count, is what the mockup drew and what a player can see.
+
+      What the kit strip cannot do is hold a row THIS one is the wrong shape for. `.seg` is a
+      pill rail: `inline-flex`, no wrap, no scroll -- correct for a designed, fixed set of tabs
+      whose widths an author sized the rail against. These options are not designed. They are
+      built from the categories the player happens to be carrying, so both how many there are and
+      how wide each one is are data. Five of them measured 485px inside a 464px pane on the first
+      try, and a sixth is one looted medkit away. A row that wraps is the only shape that survives
+      that, and the kit has no wrapping strip to reach for.
+
+      `aria-pressed` is gone with the toggle, though: this is a radio group now -- exactly one
+      chip is on, `All` included -- and it says so.
+    -->
+    <div class="chips" role="radiogroup" aria-label={locale.ui_category || 'Category'}>
+      <button
+        class="chip"
+        class:on={chosen === null}
+        role="radio"
+        aria-checked={chosen === null}
+        onclick={() => (chosen = null)}
+      >
+        {locale.ui_cat_all || 'All'}<span class="tally">{itemCount}</span>
+      </button>
       {#each present as [name, count] (name)}
         <button
           class="chip"
           class:on={chosen === name}
-          aria-pressed={chosen === name}
-          onclick={() => (chosen = chosen === name ? null : name)}
+          role="radio"
+          aria-checked={chosen === name}
+          onclick={() => (chosen = name)}
         >
           {chipLabel(name)}<span class="tally">{count}</span>
         </button>
