@@ -4,7 +4,7 @@
   import { anchored } from '../lib/position';
   import { isPinned, pinnable, togglePin } from '../lib/pins.svelte';
   import { items as itemDefs, locale } from '../lib/state.svelte';
-  import { closeContextMenu, contextMenu, openWeaponPanel } from '../lib/ui.svelte';
+  import { closeContextMenu, contextMenu, openCountPrompt, openWeaponPanel } from '../lib/ui.svelte';
   import { setClipboard } from '../utils/setClipboard';
   import { InventoryType } from '../typings';
 
@@ -21,6 +21,8 @@
     label: string;
     run?: () => void;
     children?: Entry[];
+    /** First of a group: draws the divider above itself. See `entries` below. */
+    starts?: boolean;
   }
 
   const item = $derived(contextMenu.item);
@@ -66,24 +68,69 @@
   const entries = $derived.by<Entry[]>(() => {
     if (!item) return [];
 
+    /**
+     * Drop asks how many, through the same `CountControl` Split uses — but only when
+     * there is a choice to make. A stack of one has nothing to ask about, and asking
+     * anyway would be a dialog with one honest answer already selected.
+     */
+    const dropAll = () =>
+      onDrop({ inventory: InventoryType.PLAYER, item: { name: item.name, slot: item.slot } });
+
+    const runDrop = () => {
+      if ((item.count ?? 0) <= 1) return dropAll();
+
+      const label = item.metadata?.label || itemDefs[item.name!]?.label || item.name || '';
+
+      openCountPrompt(
+        label,
+        locale.ui_drop || 'Drop',
+        locale.ui_drop_blurb || 'On the ground, where you stand.',
+        item.count!,
+        (amount) => onDrop({ inventory: InventoryType.PLAYER, item: { name: item.name, slot: item.slot } }, undefined, amount),
+      );
+    };
+
+    /*
+     * THREE GROUPS, AND THE DIVIDERS ARE THE ONLY THING SAYING SO.
+     *
+     * A pistol lists ten entries, and every one of them carried an identical hairline -- which is
+     * a table, not a menu. Uniform separation is the same as none: it tells you where a row ends
+     * and nothing about what belongs with what. The rule is inverted below, so a hairline appears
+     * only where a group changes.
+     *
+     * The groups answer three different questions, and the third is the one the code already
+     * argued for -- see the pin comment further down, which says pinning is about the square and
+     * not the thing in it:
+     *
+     *   1. What you do with the thing.        Use, Give, Drop
+     *   2. What this particular thing offers. Remove ammo, the serial, attachments, item buttons
+     *   3. What the square does.              Pin / Unpin slot
+     *
+     * NO COLOUR, and Drop does not get any. A red menu row would be a tier this tree does not
+     * have -- `--color-danger` is spent on state here (a bar, a badge) and never on chrome, and
+     * `Button` has no destructive variant to borrow. Use, Give and Drop are peers anyway: three
+     * things you can do with an item, which is exactly why they are one group.
+     *
+     * The pin moved below attachments to sit in its own group. Nothing depended on its position.
+     */
     const list: Entry[] = [
       { label: locale.ui_use || 'Use', run: () => onUse(item) },
       { label: locale.ui_give || 'Give', run: () => onGive(item) },
-      {
-        label: locale.ui_drop || 'Drop',
-        run: () => onDrop({ inventory: InventoryType.PLAYER, item: { name: item.name, slot: item.slot } }),
-      },
+      { label: locale.ui_drop || 'Drop', run: runDrop },
     ];
 
+    /** Group 2 opens at whichever of these the item happens to have. */
+    const offers: Entry[] = [];
+
     if (item.metadata?.ammo > 0) {
-      list.push({
+      offers.push({
         label: locale.ui_remove_ammo,
         run: () => fetchNui('removeAmmo', item.slot),
       });
     }
 
     if (item.metadata?.serial) {
-      list.push({
+      offers.push({
         label: locale.ui_copy,
         run: () => setClipboard(item.metadata?.serial || ''),
       });
@@ -109,23 +156,35 @@
      * anyway, but the restriction is real: a stash id changes with every property, boot
      * and drop, so pins kept per stash would grow without bound.
      */
+    const slotEntries: Entry[] = [];
+
     if (pinnable(InventoryType.PLAYER)) {
       const on = isPinned(InventoryType.PLAYER, item.slot);
 
-      list.push({
+      slotEntries.push({
         label: on ? locale.ui_unpin || 'Unpin slot' : locale.ui_pin || 'Pin slot',
         run: () => togglePin(InventoryType.PLAYER, item.slot),
       });
     }
 
     if (isWeapon) {
-      list.push({
+      offers.push({
         label: locale.ui_attachments || 'Attachments',
         run: () => openWeaponPanel(item.slot),
       });
     }
 
-    return [...list, ...itemButtons()];
+    /*
+     * A group that came out empty opens nothing. An item with no ammo, no serial, no attachments
+     * and no buttons of its own is three verbs and a pin, and drawing a divider before the pin is
+     * the whole of what a two-group menu needs -- marking the first entry of a group that is not
+     * there would put a line under the last row of the menu.
+     */
+    const groups = [list, [...offers, ...itemButtons()], slotEntries].filter((g) => g.length > 0);
+
+    return groups.flatMap((group, i) =>
+      group.map((entry, j) => (i > 0 && j === 0 ? { ...entry, starts: true } : entry)),
+    );
   });
 
   let openSubmenu = $state<string | null>(null);
@@ -173,6 +232,7 @@
     {#each entries as entry (entry.label)}
       <button
         class="entry"
+        class:starts={entry.starts}
         class:parent={!!entry.children}
         class:active={openSubmenu === entry.label}
         onmouseenter={(event) => hover(entry, event)}
@@ -200,36 +260,88 @@
 {/if}
 
 <style>
+  /*
+   * ONE PANEL, NOT A STACK OF CARDS — `ox_lib`'s `ContextMenu.svelte` is the reference.
+   *
+   * The `--space-1` gutter is gone and `overflow: hidden` takes its place: the panel is the
+   * surface, an entry is a region of it, and the first and last entries clip to the panel's own
+   * corners. That is what lets a row be full-bleed rather than a rounded box inset from an edge
+   * the panel had already drawn.
+   */
   .menu {
     position: fixed;
     z-index: 80;
     display: flex;
     flex-direction: column;
     min-width: 160px;
-    padding: var(--space-1);
     background: var(--surface-raised);
+    text-shadow: none;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     box-shadow: inset 0 1px 0 var(--edge-highlight), var(--shadow-panel);
+    overflow: hidden;
   }
 
+  /*
+   * A FULL-BLEED SLAB WITH A HAIRLINE ABOVE IT.
+   *
+   * It was a rounded card in a gutter, which is the shape `ox_lib`'s context and list menus have
+   * both stopped drawing: the only thing that should separate two rows is a one-pixel rule.
+   * `border-top` rather than `border-bottom`, so the rule falls between rows and never under the
+   * last one, where it would read as a line the panel drew across itself.
+   */
   .entry {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
-    padding: var(--space-1-5) var(--space-2);
-    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
+    border: 0;
+    /* Reserved at rest so a group boundary does not shift the rows below it. */
+    border-top: 1px solid transparent;
+    /* Reserved at rest so the row does not shift when it takes the rail. */
+    border-left: 2px solid transparent;
+    border-radius: 0;
     color: var(--color-gray);
     font-size: var(--text-sm);
     text-align: left;
     white-space: nowrap;
+    transition:
+      background-color var(--dur-fast) var(--ease-out),
+      border-left-color var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
   }
 
-  /* Neutral lift rather than a hue wash — the shared hover convention, see tokens.css. */
-  .entry:hover,
+  /*
+   * The only hairlines in the menu, and there are at most two of them.
+   *
+   * Every row used to carry one, with `:first-child` turning the top one off -- ten identical
+   * lines, which separate rows from each other and say nothing about what belongs together. The
+   * border is reserved on every row above and painted only here, so the panel is read as blocks
+   * and the rows inside a block are read as a run.
+   */
+  .entry.starts {
+    border-top-color: var(--color-border);
+  }
+
+  /*
+   * HOVER IS A NEUTRAL WASH AND A RAIL; A HELD-OPEN PARENT IS THE ACCENT ONE.
+   *
+   * Both were one stacked-layer fill, which said the same thing twice and said neither of them
+   * as an edge. The two are different statements and now read as such: the pointer is passing
+   * over this (neutral, per `ContextButton`), versus this entry's submenu is open and the
+   * pointer has moved off into it (accent, per the reference's selected row). Without the
+   * second, walking into a submenu made the parent look abandoned.
+   */
+  .entry:hover {
+    background-color: var(--tint-raised);
+    border-left-color: var(--color-primary);
+    color: var(--color-white);
+  }
+
   .entry.active {
-    background-image: var(--layer-selected), var(--layer-hover);
+    background-color: var(--primary-glow);
+    border-left-color: var(--color-primary);
     color: var(--color-white);
   }
 
@@ -239,7 +351,9 @@
 
   /* The gap between a parent entry and its submenu is only 2px, but the pointer still
      crosses it. Widening the submenu's hit area upward stops the menu closing when the
-     cursor clips the corner — the cheap half of what floating-ui's safePolygon did. */
+     cursor clips the corner — the cheap half of what floating-ui's safePolygon did. The
+     padding survived the gutter's removal because it is a hit area rather than a gutter:
+     it is on this one menu, on one side, and deleting it reintroduces the bug. */
   .submenu {
     padding-top: var(--space-1-5);
     margin-top: -4px;
