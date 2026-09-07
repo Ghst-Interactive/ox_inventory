@@ -2,14 +2,12 @@
   import { tick } from 'svelte';
   import { dropToGround, onGive, onUse } from '../lib/actions';
   import { droppable } from '../lib/dnd.svelte';
+  import { isSlotWithItem } from '../lib/helpers';
   import { inv } from '../lib/inventory.svelte';
   import { fetchNui } from '../lib/nui';
   import { locale } from '../lib/state.svelte';
-  import { InventoryType, type DragSource } from '../typings';
-  import Icon from '../lib/Icon.svelte';
-  import { Info, Settings } from '../lib/icons';
-  import UsefulControls from './UsefulControls.svelte';
-  import SettingsPanel from './SettingsPanel.svelte';
+  import { clearSelection, selection } from '../lib/ui.svelte';
+  import { InventoryType, type DragSource, type SlotWithItem } from '../typings';
 
   /**
    * The centre column: how many of a thing to move, and the three verbs.
@@ -29,10 +27,26 @@
    *
    * `dropToGround` is shared with the menu rather than reimplemented, so both ask how many in
    * the same circumstances. Close stays a button: it is not somewhere an item can go.
+   *
+   * ## They are also pressable now, and they were not
+   *
+   * Each was a `<button>` carrying a `droppable` and no `onclick` — it lit on hover, it looked
+   * exactly like the Close button beside it, and pressing it did nothing whatsoever. A control
+   * that cannot be pressed must not be shaped like one.
+   *
+   * They act on the selected slot (`lib/ui.svelte.ts`), which a bare left-click sets — the one
+   * gesture on a slot that used to do nothing. With nothing selected they are `disabled`, so the
+   * answer to "why did that do nothing" is on the button rather than in the player's head. The
+   * amount box above them has always fed `onGive` and `onDrop`; now it feeds a press too.
+   *
+   * ## The help and settings buttons are gone from here
+   *
+   * They sat under the verbs as bare `--color-dim` glyphs with no plate, in the gap between the
+   * panes — over the moving world, in the one ink colour this tree's own rule says never survives
+   * it. They are ghost buttons in the player pane's header now, beside Backpack and Tidy, where
+   * there is a surface under them.
    */
 
-  let helpOpen = $state(false);
-  let settingsOpen = $state(false);
   let input = $state<HTMLInputElement | null>(null);
 
   /**
@@ -94,10 +108,28 @@
   }
 
   const fromPlayer = (source: DragSource) => source.inventory === InventoryType.PLAYER;
-</script>
 
-<UsefulControls bind:open={helpOpen} />
-<SettingsPanel bind:open={settingsOpen} />
+  /**
+   * What a press acts on: the selected slot, read live rather than captured.
+   *
+   * Only the player's own inventory — Use, Give and Drop are all things you do to something you
+   * are carrying, which is the same rule `fromPlayer` applies to the drag path.
+   */
+  const held = $derived.by<SlotWithItem | undefined>(() => {
+    if (selection.inventory !== InventoryType.PLAYER || selection.slot === null) return undefined;
+
+    const slot = inv.leftInventory.items[selection.slot - 1];
+    return isSlotWithItem(slot) ? slot : undefined;
+  });
+
+  /** Every verb clears the selection: the thing it named has just moved, been used or gone. */
+  function run(action: (item: SlotWithItem) => unknown) {
+    if (!held) return;
+
+    action(held);
+    clearSelection();
+  }
+</script>
 
 <div class="control">
   <input
@@ -113,6 +145,8 @@
 
   <button
     class="verb"
+    disabled={!held}
+    onclick={() => run(onUse)}
     use:droppable={{ canDrop: fromPlayer, ondrop: (source) => onUse(source.item) }}
   >
     {locale.ui_use || 'Use'}
@@ -120,6 +154,8 @@
 
   <button
     class="verb"
+    disabled={!held}
+    onclick={() => run(onGive)}
     use:droppable={{ canDrop: fromPlayer, ondrop: (source) => onGive(source.item) }}
   >
     {locale.ui_give || 'Give'}
@@ -127,21 +163,14 @@
 
   <button
     class="verb"
+    disabled={!held}
+    onclick={() => run((item) => dropToGround(item.slot))}
     use:droppable={{ canDrop: fromPlayer, ondrop: (source) => dropToGround(source.item.slot) }}
   >
     {locale.ui_drop || 'Drop'}
   </button>
 
   <button class="verb" onclick={() => fetchNui('exit')}>{locale.ui_close || 'Close'}</button>
-
-  <div class="tools">
-    <button class="help" onclick={() => (helpOpen = true)} aria-label={locale.ui_usefulcontrols}>
-      <Icon node={Info} size="16px" />
-    </button>
-    <button class="help" onclick={() => (settingsOpen = true)} aria-label={locale.ui_settings || 'Settings'}>
-      <Icon node={Settings} size="16px" />
-    </button>
-  </div>
 </div>
 
 <style>
@@ -188,6 +217,13 @@
     outline: none;
   }
 
+  /* The state that makes the press honest: with nothing selected there is nothing to act on, and
+     saying so on the control is the difference between "disabled" and "broken". */
+  .verb:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
   .verb {
     padding: var(--space-2) var(--space-3);
     background: var(--surface-panel);
@@ -213,7 +249,9 @@
       color var(--dur-fast) var(--ease-out);
   }
 
-  .verb:hover {
+  /* `:not(:disabled)`, or a verb with nothing selected lights up under the pointer and then
+     refuses the press -- which is the same lie the missing `onclick` was telling. */
+  .verb:hover:not(:disabled) {
     border-color: var(--primary-glow-border);
     color: var(--color-white);
   }
@@ -240,20 +278,4 @@
     color: var(--color-primary);
   }
 
-  .tools {
-    display: flex;
-    align-self: center;
-    gap: var(--space-1);
-    margin-top: var(--space-1);
-  }
-
-  .help {
-    padding: var(--space-1-5);
-    color: var(--color-dim);
-    border-radius: var(--radius-full);
-  }
-
-  .help:hover {
-    color: var(--color-primary);
-  }
 </style>

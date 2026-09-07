@@ -1,7 +1,16 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { drag, draggable, droppable, isDragging, type DropRelease } from '../lib/dnd.svelte';
-  import { closeTooltip, openContextMenu, openSplitPrompt, openTooltip, ui } from '../lib/ui.svelte';
+  import {
+    clearSelection,
+    closeTooltip,
+    openContextMenu,
+    openCountPrompt,
+    openTooltip,
+    selectSlot,
+    selection,
+    ui,
+  } from '../lib/ui.svelte';
   import { inv } from '../lib/inventory.svelte';
   import { onBuy, onCraft, onDrop, onUse } from '../lib/actions';
   import {
@@ -119,8 +128,12 @@
     if (release.alt && stack > 1 && incoming.inventory !== InventoryType.CRAFTING) {
       const name = from.metadata?.label || itemDefs[from.name!]?.label || from.name || '';
 
-      return openSplitPrompt(name, stack, release.x, release.y, (amount) =>
-        route(incoming, amount),
+      return openCountPrompt(
+        name,
+        locale.ui_split || 'Split',
+        locale.ui_split_blurb || 'Into a second stack.',
+        stack,
+        (amount) => route(incoming, amount),
       );
     }
 
@@ -177,7 +190,7 @@
   function onclick(event: MouseEvent) {
     dismissTooltip();
 
-    if (!isSlotWithItem(item)) return;
+    if (!isSlotWithItem(item)) return clearSelection();
 
     // ctrl+click sends the item to the other pane, alt+click uses it. Both are
     // documented in the controls panel and are how most players actually move things.
@@ -185,8 +198,18 @@
       onDrop({ inventory: inventoryType, item: { name: item.name!, slot: item.slot } });
     } else if (event.altKey && inventoryType === InventoryType.PLAYER) {
       onUse(item);
+    } else {
+      // A bare click was the one gesture on a slot that did nothing. It now says *this one*,
+      // which is what gives the control column's three verbs something to act on -- see the
+      // note over `selection` in `lib/ui.svelte.ts`. A modified click is already a complete
+      // action and deliberately does not also select.
+      selectSlot(inventoryType, item.slot);
     }
   }
+
+  const selected = $derived(
+    selection.inventory === inventoryType && selection.slot === item.slot && isSlotWithItem(item),
+  );
 
   const weightLabel = $derived.by(() => {
     if (!filled || !item.weight) return '';
@@ -212,6 +235,8 @@
   class:hotslot={isHotslot}
   class:pinned
   class:equipped
+  class:selected
+  aria-current={selected ? 'true' : undefined}
   style:background-image={imageUrl ? `url(${imageUrl})` : undefined}
   use:draggable={{ source, canDrag: () => available }}
   use:droppable={{ canDrop, ondrop: accept }}
@@ -287,6 +312,28 @@
      slightly raised rather than as another cell in the grid. */
   .hotslot {
     background-color: var(--surface-raised);
+    text-shadow: none;
+  }
+
+  /*
+   * SELECTED, and it may not use the edge.
+   *
+   * The border belongs to the drag layer -- accept is a dashed accent, refuse a dashed red -- and
+   * the name strip belongs to `equipped`. That leaves the face, so this is a wash across the whole
+   * tile.
+   *
+   * A pseudo-element rather than `background-image`, which is what the drag-over state assigns:
+   * that is transient and may replace the art for a moment, and a selection is not. `z-index: -1`
+   * is what puts the wash over the art and *under* the count and the name, since neither of those
+   * is positioned and negative-z children paint below in-flow content.
+   */
+  .selected::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--layer-selected);
+    pointer-events: none;
   }
 
   /*

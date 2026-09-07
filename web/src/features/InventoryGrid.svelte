@@ -12,7 +12,9 @@
   import Panel from '../lib/Panel.svelte';
   import Bar from '../lib/Bar.svelte';
   import Button from '../lib/Button.svelte';
-  import { ArrowDownAZ, Backpack, Search, X } from '../lib/icons';
+  import { ArrowDownAZ, Backpack, Info, Search, Settings, X } from '../lib/icons';
+  import UsefulControls from './UsefulControls.svelte';
+  import SettingsPanel from './SettingsPanel.svelte';
   import InventorySlot from './InventorySlot.svelte';
 
   let {
@@ -43,6 +45,39 @@
   let page = $state(0);
   let query = $state('');
   let chosen = $state<string | null>(null);
+
+  /**
+   * THE FIELD IS BEHIND A BUTTON NOW.
+   *
+   * It was drawn permanently above the grid, in both panes at once, whenever a pane held more than
+   * `SEARCH_THRESHOLD` slots -- which is nearly always. Two full-width fields, each with a label,
+   * a glyph and a gap, standing open for something a player does occasionally: together they cost
+   * more of the pane than the chips and the carry bar, and both of those are read every time the
+   * inventory opens.
+   *
+   * The header row already exists and already holds this pane's verbs, so the magnifier goes there
+   * beside Backpack and Tidy. Opening focuses the field; closing clears the query, because a
+   * filter that is narrowing a pane from behind a closed door is the same trap as filtering
+   * instead of dimming -- see the note over `matches`.
+   */
+  let searching = $state(false);
+  let field = $state<HTMLElement | null>(null);
+
+  function toggleSearch() {
+    searching = !searching;
+    if (!searching) return void (query = '');
+
+    // The input lives inside `Field`, which exposes no ref; reaching for the wrapper's first
+    // input is enough and does not depend on that component's internals.
+    queueMicrotask(() => field?.querySelector('input')?.focus());
+  }
+
+  /** Global, so only on your own pane: one inventory is open and these two panels are about it. */
+  let helpOpen = $state(false);
+  let settingsOpen = $state(false);
+  const ownPane = $derived(
+    inventory.type === InventoryType.PLAYER && inventory.id === inv.leftInventory.id,
+  );
 
   const searchable = $derived(inventory.slots > SEARCH_THRESHOLD);
   const needle = $derived(query.trim().toLowerCase());
@@ -325,6 +360,11 @@
   const format = (grams: number) => (grams / 1000).toLocaleString('en-us', { maximumFractionDigits: 2 });
 </script>
 
+{#if ownPane}
+  <UsefulControls bind:open={helpOpen} />
+  <SettingsPanel bind:open={settingsOpen} />
+{/if}
+
 <div class="w-bag">
 <Panel eyebrow={kind} title={inventory.label ?? ''} scroll={false}>
   {#snippet actions()}
@@ -357,6 +397,38 @@
         <Icon node={ArrowDownAZ} size="14px" />
       </Button>
     {/if}
+
+    {#if searchable}
+      <Button
+        variant="ghost"
+        selected={searching}
+        onclick={toggleSearch}
+        label={locale.ui_search || 'Search'}
+      >
+        <Icon node={Search} size="14px" />
+      </Button>
+    {/if}
+
+    <!-- The controls sheet and the settings panel. They were bare glyphs under the verbs, over the
+         moving world in `--color-dim` -- the one ink colour this tree's own rule says never
+         survives it. Here they have the header's surface under them and the same material as
+         every other button on it. -->
+    {#if ownPane}
+      <Button
+        variant="ghost"
+        onclick={() => (helpOpen = true)}
+        label={locale.ui_usefulcontrols || 'Controls'}
+      >
+        <Icon node={Info} size="14px" />
+      </Button>
+      <Button
+        variant="ghost"
+        onclick={() => (settingsOpen = true)}
+        label={locale.ui_settings || 'Settings'}
+      >
+        <Icon node={Settings} size="14px" />
+      </Button>
+    {/if}
   {/snippet}
 
   <div class="body-stack">
@@ -373,7 +445,7 @@
     />
   {/if}
 
-  {#if searchable}
+  {#if searchable && searching}
     <!--
       `Field`, and this file is one of three that wrote it. `ghst_emotes`' animation menu and
       `ghst_appearance`'s pack picker had the same box -- a glyph, a bare input, a 2px left border
@@ -386,6 +458,7 @@
       so a player reading a filtered grid can see *why* it is short. It is derived from the value
       in the component rather than passed, which is what retires the `class:active` this had.
     -->
+    <div bind:this={field}>
     <Field
       bind:value={query}
       label={locale.ui_search || 'Search'}
@@ -394,6 +467,7 @@
       {#snippet glyph()}<Icon node={Search} size="13px" />{/snippet}
       {#snippet clearGlyph()}<Icon node={X} size="11px" />{/snippet}
     </Field>
+    </div>
   {/if}
 
   {#if chipped}

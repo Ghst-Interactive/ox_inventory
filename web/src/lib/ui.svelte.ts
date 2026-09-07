@@ -68,41 +68,56 @@ export function closeContextMenu() {
 }
 
 /**
- * The split prompt: "how many of these do you want to move?"
+ * The count prompt: "how many of these?" — a centred dialog, for Split AND Drop.
  *
- * Opened by releasing a drag with Alt held. The alternatives already in the UI are the
- * amount box, which has to be filled in *before* the drag and applies to every move
- * until you clear it, and shift-drag, which only ever gives you half — so moving 7 of a
- * stack of 40 meant typing 7, dragging, then remembering to clear the box.
+ * It was anchored at the pointer until the design walk (2026-09-05), which made the three
+ * questions one shape: a centred kit `Panel` per verb, drawn by `CountDialog`. The `x, y`
+ * this used to take are gone rather than ignored, because an argument nothing reads is a
+ * thing the next caller fills in carefully and wrongly.
+ *
+ * Opened by releasing a drag with Alt held (Split) or by choosing Drop on a stack of more
+ * than one from the context menu. The alternatives already in the UI are the amount box,
+ * which has to be filled in *before* the drag and applies to every move until you clear
+ * it, and shift-drag, which only ever gives you half — so moving 7 of a stack of 40 meant
+ * typing 7, dragging, then remembering to clear the box.
+ *
+ * `verb` names the button — "Split" or "Drop" — the one difference between the two
+ * callers; everything else (the digit, the slider, the quick chips) is the one
+ * `CountControl` the design walk asked for, shared with the give picker as well.
  *
  * `commit` is supplied by whoever opened the prompt rather than resolved here. The rules
  * for what a drop means differ per pane (a shop purchase is not a move, and a crafting
  * bench counts iterations rather than items), and all three already live in actions.ts.
  * Storing the closure keeps that knowledge out of this file.
  */
-export const splitPrompt = $state<{
-  anchor: DOMRect | null;
+export const countPrompt = $state<{
+  open: boolean;
   label: string;
+  verb: string;
+  /** The one line under the title saying where the items go. The panel's blurb. */
+  blurb: string;
   max: number;
   commit: ((count: number) => void) | null;
-}>({ anchor: null, label: '', max: 0, commit: null });
+}>({ open: false, label: '', verb: '', blurb: '', max: 0, commit: null });
 
-export function openSplitPrompt(
+export function openCountPrompt(
   label: string,
+  verb: string,
+  blurb: string,
   max: number,
-  x: number,
-  y: number,
   commit: (count: number) => void,
 ) {
-  splitPrompt.label = label;
-  splitPrompt.max = max;
-  splitPrompt.anchor = new DOMRect(x, y, 0, 0);
-  splitPrompt.commit = commit;
+  countPrompt.label = label;
+  countPrompt.verb = verb;
+  countPrompt.blurb = blurb;
+  countPrompt.max = max;
+  countPrompt.commit = commit;
+  countPrompt.open = true;
 }
 
-export function closeSplitPrompt() {
-  splitPrompt.anchor = null;
-  splitPrompt.commit = null;
+export function closeCountPrompt() {
+  countPrompt.open = false;
+  countPrompt.commit = null;
 }
 
 /**
@@ -155,4 +170,36 @@ export function openGivePicker(slot: number, count: number, targets: GiveTarget[
 export function closeGivePicker() {
   givePicker.open = false;
   givePicker.targets = [];
+}
+
+/**
+ * THE SELECTED SLOT, and why this exists at all.
+ *
+ * `Use`, `Give` and `Drop` in the control column were drop targets and nothing else: a `<button>`
+ * with a `droppable` action and no `onclick`, so pressing one did nothing at all. That is the
+ * worst state a control can be in -- it looks pressable, it highlights on hover, and it is inert.
+ *
+ * A bare left-click on a slot did nothing either (ctrl and alt were taken, a plain click was not),
+ * so it is free to mean *this one*. The verbs then act on the selection, and the amount box above
+ * them -- which until now only ever affected a drag -- starts meaning something for a press too.
+ *
+ * Kept here rather than in `inv` because it is a fact about the screen, not about the inventory:
+ * it does not survive the pane closing and nothing on the server has an opinion about it.
+ */
+export const selection = $state<{ inventory: string | null; slot: number | null }>({
+  inventory: null,
+  slot: null,
+});
+
+/** Clicking the selected slot again clears it, so there is a way out that is not a verb. */
+export function selectSlot(inventory: string, slot: number) {
+  if (selection.inventory === inventory && selection.slot === slot) return clearSelection();
+
+  selection.inventory = inventory;
+  selection.slot = slot;
+}
+
+export function clearSelection() {
+  selection.inventory = null;
+  selection.slot = null;
 }
