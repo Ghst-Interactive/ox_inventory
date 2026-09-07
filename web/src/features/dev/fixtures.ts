@@ -54,7 +54,13 @@ export const locale: Record<string, string> = {
   ui_drop: 'Drop',
   ui_durability: 'Durability',
   ui_equipped: 'Equipped',
+  ui_confirm: 'Confirm',
   ui_give: 'Give',
+  ui_give_blurb: "Somebody within arm's reach.",
+  ui_give_pick: 'Choose somebody',
+  ui_split_blurb: 'Into a second stack.',
+  ui_drop_blurb: 'On the ground, where you stand.',
+  ui_to: 'to',
   ui_holstered: 'Holstered',
   ui_move: 'Move',
   ui_no_attachments: 'Nothing fitted',
@@ -318,3 +324,74 @@ export const backpack: SlotWithItem[] = occupied([
   // definition should be tested against the two rows above it.
   { slot: 8, name: 'repairkit', count: 1, weight: 2500 },
 ]);
+
+/**
+ * The people in reach, for the give dialog.
+ *
+ * In game this list is `getGiveTargets`' answer — a server id and a name per person — and the
+ * dialog is only shown when there are two or more, so three is the shape worth looking at.
+ */
+export const giveTargets = [
+  { id: 12, label: 'Sofia Marchetti' },
+  { id: 27, label: 'Ray Boccino' },
+  { id: 41, label: 'Nadia Vaughn' },
+];
+
+/**
+ * The attachments screen, as Lua would send it.
+ *
+ * In game `modules/weaponstage/client.lua` builds this by asking the engine which components the
+ * weapon takes; there is no engine here, so the pistol at slot 4 gets a hand-written catalogue.
+ * The five points are the ones a `WEAPON_PISTOL` really does take, and the two fitted parts are
+ * the two in that slot's metadata above, so the harness and the store agree.
+ */
+export const weaponStage = {
+  slot: 4,
+  live: true,
+  inHand: true,
+  points: [
+    {
+      id: 'sight',
+      options: [
+        { name: 'at_scope_macro', label: 'Macro Scope', slot: 9, fitted: false },
+        // Not carried: the row that has to say so rather than disappear.
+        { name: 'at_scope_small', label: 'Small Scope', fitted: false },
+      ],
+    },
+    {
+      id: 'muzzle',
+      fitted: 'at_suppressor',
+      options: [
+        { name: 'at_compensator', label: 'Compensator', slot: 11, fitted: false },
+        { name: 'at_suppressor', label: 'Suppressor', fitted: true },
+      ],
+    },
+    {
+      id: 'flashlight',
+      fitted: 'at_flashlight',
+      options: [{ name: 'at_flashlight', label: 'Tactical Flashlight', fitted: true }],
+    },
+    {
+      id: 'magazine',
+      options: [{ name: 'at_clip_extended_pistol', label: 'Extended Pistol Clip', slot: 13, fitted: false }],
+    },
+    {
+      id: 'skin',
+      options: [{ name: 'at_skin_pistol_platinum', label: 'Platinum Pearl', fitted: false }],
+    },
+  ],
+};
+
+/**
+ * Where those five points land, as fractions of the stage rect.
+ *
+ * Lua does the division — it knows the rect, having framed the model into it — so these are the
+ * same numbers the mockup's `POINTS` carry, and they mean the same thing at any window size.
+ */
+export const weaponPoints = [
+  { id: 'sight', x: 0.52, y: 0.24, visible: true },
+  { id: 'muzzle', x: 0.1, y: 0.42, visible: true },
+  { id: 'flashlight', x: 0.24, y: 0.6, visible: true },
+  { id: 'magazine', x: 0.58, y: 0.78, visible: true },
+  { id: 'skin', x: 0.76, y: 0.5, visible: true },
+];

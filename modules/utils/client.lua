@@ -158,14 +158,33 @@ function Utils.CreateBlip(settings, coords)
     return blip
 end
 
----Takes OxTargetBoxZone or legacy zone data (PolyZone) and creates a zone.
----@param data OxTargetBoxZone | { length: number, minZ: number, maxZ: number, loc: vector3, heading: number, width: number, distance: number }
+---Takes `ghst_interact`'s box-zone shape (`coords`/`size`/`rotation`) or the legacy
+---`loc`/`length`/`width`/`heading`/`minZ`/`maxZ` spelling qtarget and `ox_target` both used, and
+---registers it as a `place` with a volume.
+---
+---**The one funnel for every box zone in this resource** -- evidence, stashes and the box-shaped
+---shop targets all call this rather than `exports.ghst_interact:create` directly, so the
+---guard/pcall/re-register dance (`ghst_banking`'s `atms.lua` pattern) lives here once instead of
+---three times over. The callers already rebuild themselves on a group change or on
+---`ghst_interact` restarting -- `Inventory.Evidence()`/`Inventory.Stashes()` and
+---`Shops.refreshShops()` -- so nothing here has to remember anything between calls.
+---@param id string unique, namespaced by the caller
+---@param data { coords: vector3, size: vector3, rotation: number? } | { length: number, minZ: number, maxZ: number, loc: vector3, heading: number, width: number, distance: number }
 ---@param options? OxTargetOption[]
----@return number
-function Utils.CreateBoxZone(data, options)
+---@return string id
+function Utils.CreateBoxZone(id, data, options)
     if data.length then
+        --- The legacy spelling never carried a point of its own, so the ANCHOR ghst_interact
+        --- requires is the zone's own centre: x/y from `loc`, z at the midpoint of `minZ`/`maxZ`.
+        --- That is not a guess -- it is the same point the box's own centre already was under
+        --- `ox_target`, just stated rather than left for a zone object to compute.
+        --- **`minZ` and `maxZ` are absolute world heights, not offsets from `loc`.** That is the
+        --- PolyZone spelling every one of these tables was written in -- `data/evidence.lua`'s
+        --- first locker is `loc.z` 30.69 between 29.49 and 32.09 -- so the centre is the midpoint
+        --- of the pair and `loc.z` is not in it. Adding half the height to `loc.z` put this box a
+        --- metre and a half up its own wall, where a player standing at the locker was outside it.
         local height = math.abs(data.maxZ - data.minZ)
-        local z = data.loc.z + math.abs(data.minZ - data.maxZ) / 2
+        local z = (data.minZ + data.maxZ) / 2
         data.coords = vec3(data.loc.x, data.loc.y, z)
         data.size = vec3(data.width, data.length, height)
         data.rotation = data.heading
@@ -189,10 +208,49 @@ function Utils.CreateBoxZone(data, options)
         data.options = options
     end
 
-    return exports.ox_target:addBoxZone(data)
+    if GetResourceState('ghst_interact') == 'started' then
+        pcall(function()
+            exports.ghst_interact:create({
+                id = id,
+                coords = data.coords,
+                size = data.size,
+                rotation = data.rotation,
+                options = data.options,
+            })
+        end)
+    end
+
+    return id
+end
+
+---Removes a box zone registered through `Utils.CreateBoxZone`. Guarded and `pcall`-wrapped for
+---the same reason the create half is: a stash or shop can be re-scanned while `ghst_interact` is
+---mid-restart, and a call into a stopped resource's export errors rather than no-oping.
+---@param id string?
+function Utils.RemoveBoxZone(id)
+    if not id or GetResourceState('ghst_interact') ~= 'started' then return end
+
+    pcall(function() exports.ghst_interact:remove(id) end)
 end
 
 local hasTextUi
+
+--- `Interact with [E]`, except that the key is the player's rather than assumed.
+---
+--- **One function because there were five copies**, and every one of them was
+--- `GetControlInstructionalButton(0, 38, true):sub(3)` -- which is right only while the token is
+--- `t_` followed by a key name. On a pad control 38 answers `b_34`, and `:sub(3)` made that `34`:
+--- the prompt read `Interact with [34]`. `ox_lib`'s `hints.lua` carries the measured alphabet and
+--- `lib.keyLabel` is the one-key form of it.
+---
+--- The fallback is `E` because that is control 38's own default and there is nothing better to
+--- say: a pad glyph is an icon, and no text stands in for it honestly. It is wrong for a pad
+--- player who has never touched a keyboard, and it is still the better half of the trade -- a
+--- key you can find is recoverable, and `34` is not.
+---@return string
+function Utils.interactPrompt()
+    return locale('interact_prompt', lib.keyLabel({ control = 38 }, 'E'))
+end
 
 ---@param point CPoint
 function Utils.nearbyMarker(point)
@@ -203,7 +261,13 @@ function Utils.nearbyMarker(point)
     if point.isClosest and point.currentDistance < 1.2 then
         if not hasTextUi then
             hasTextUi = point
-            lib.showTextUI(point.prompt.message, point.prompt.options)
+            --- A message may be a function, and the ones carrying a key are. Resolving a key
+            --- into a string when the file loaded meant the prompt outlived the binding it was
+            --- built from -- rebind the key, or pick up a pad, and it went on naming the old one
+            --- until the resource restarted.
+            local message = point.prompt.message
+
+            lib.showTextUI(type(message) == 'function' and message() or message, point.prompt.options)
         end
 
         if IsControlJustReleased(0, 38) then
@@ -223,20 +287,40 @@ function Utils.nearbyMarker(point)
     end
 end
 
-function Utils.blurIn()
-    if IsScreenblurFadeRunning() then
-        DisableScreenblurFade()
-    end
+--[[
+    THE SCREEN BLUR IS SHARED, AND THIS RESOURCE USED TO TREAT IT AS ITS OWN.
 
-    TriggerScreenblurFadeIn(100)
+    `backdrop-filter` cannot reach the game frame -- NUI is composited over the rendered frame,
+    not into it -- so the blur the inventory's translucent panes sit on has to be the game's own
+    post-process. That part was always right here.
+
+    What was wrong is that `TriggerScreenblurFadeOut` is ABSOLUTE. The old pair guarded with
+    `IsScreenblurFadeRunning`, which answers whether a fade is currently in progress -- not
+    whether anybody else still wants the blur. So closing the inventory over an open ox_lib
+    dialog took the dialog's blur with it, and `DisableScreenblurFade` made it worse by cutting a
+    running fade that belonged to someone else. `lib.screenBlur` counts holders; ten resources on
+    this server blur, and before it existed any one of them could silently undo any other.
+
+    HELD, not toggled. There are three open paths in `client.lua` and one close, so an
+    uncounted-on-this-side call would climb the shared counter by two every session and never come
+    back down. `blurred` is what makes this resource exactly one holder. It also makes `blurOut`
+    safe to call unconditionally, which `client.lua` does -- the close path does not re-check
+    `client.screenblur`, so a player with the setting off was already calling it.
+]]
+local blurred = false
+
+function Utils.blurIn()
+    if blurred then return end
+
+    blurred = true
+    lib.screenBlur(true, 100)
 end
 
 function Utils.blurOut()
-    if IsScreenblurFadeRunning() then
-        DisableScreenblurFade()
-    end
+    if not blurred then return end
 
-    TriggerScreenblurFadeOut(250)
+    blurred = false
+    lib.screenBlur(false, 250)
 end
 
 --[[

@@ -270,6 +270,13 @@ Two changes carried from the server's framework strip rather than invented here:
 no `phone`, `radio`, `jammer` or `radiocell` item. **Re-adding npwd means undoing all four**,
 and that is recorded in `txData/ghst_sv/README.md` as well as here.
 
+**That fourth one is not in this repository.** `.sync` excludes `data`, so the item list that
+ships is the deployed copy under `txData/ghst_sv/resources/[ox]/ox_inventory/data/`, and the
+`data/items.lua` in *this* tree is still upstream's demo list — `phone` and `radio` are both in
+it, with their original npwd calls, and neither is ever deployed. Reading this file and
+concluding the strip missed something is a mistake that has been made; the deployed file's own
+header lists all four as deliberately absent.
+
 ## Building
 
 ```bash
@@ -287,6 +294,143 @@ ships.
 `ghst_sv` used to track. `ghst_sv` gitignores that path now — the source of truth is this
 repository. `data/` is excluded from the sync, because the item list, shops, stashes and the
 container list are the *server's* content rather than the fork's.
+
+## The design-walk pass, 2026-09-05
+
+`txData/ghst_sv/docs/ui-tdu.md` §8's row for this resource: two bags at a fixed 500px, cash as a
+slot, one count control shared by Give, Split and Drop, and weapon attachments as a live-model
+camera screen. The first three landed on the day; the fourth followed it, and is the last section
+below.
+
+**Two bags at a fixed 500px.** `InventoryGrid.svelte` now wraps its slots in a kit `Panel`
+instead of a hand-rolled `<section class="pane">`, and the carry figure moved from a header text
+line plus a full-width `WeightBar` into a kit `Bar` with a `readout` string, drawn first in the
+panel's body — the corner plate the walk rejected is gone. Sizing inverted: `app.css`'s
+`--slot-base` used to be a viewport clamp (`clamp(68px, 9.5vh, 112px)`) that the walk found too
+big; it is now derived *from* a fixed `--pane-width: calc(500 * var(--ui-px))`, five columns and
+four gaps, so the bag is the fixed thing and the slot is whatever is left over. `--pane-pad` is
+gone — the panel's own body padding is `--space-4`, the same constant the size formula divides
+back out, so the header and the grid share one inset.
+
+**Cash is a slot.** This one was already true and needed no code: `money`/`black_money` are
+ordinary items (`fixtures.ts`'s `money` entry, `InventorySlot.svelte`'s rendering), drawn with the
+same art-plus-count tile as everything else. There never was a cash corner plate to remove.
+
+**One count control.** `features/CountControl.svelte` is new: a kit `Stepper` (exact typed digit,
+arrows) plus a slider plus `SegmentedNav` quick chips (One / Half / All), reading and writing one
+`value`. Three call sites now share it:
+
+- **Split** — `SplitPrompt.svelte` is gone; `CountPrompt.svelte` replaces it and is deliberately
+  generic (`countPrompt.verb` and its blurb are the only things that tell Split and Drop apart).
+  Opened the same way (Alt-release), with the same `commit` closure contract.
+- **Drop** — new. The context menu's Drop entry used to call `onDrop` directly with no amount,
+  dropping the whole stack. It now opens the same `CountPrompt` when the stack is more than one
+  and drops the chosen amount; a stack of one still drops instantly, matching Split's own
+  precedent for not asking a question with one answer.
+- **Give** — `GivePicker.svelte` is the same dialog with a list of people above the count.
+
+**The three are one dialog now** (2026-09-05), which is the rest of the walk's row. `CountPrompt`
+and `GivePicker` were a pointer-anchored popover and a hand-rolled window respectively — two
+shapes for one question, and neither the centred kit `Panel` the gallery draws. Both now render
+`features/CountDialog.svelte`: `Shell` + `Panel` with the verb as the eyebrow, the item as the
+title, a blurb saying where the items go, the count control in the body and `Cancel` plus one
+filled commit in the foot.
+
+- **The anchor is gone rather than ignored.** `openCountPrompt` lost its `x, y` and gained the
+  blurb: `(label, verb, blurb, max, commit)`. An argument nothing reads is one the next caller
+  fills in carefully and wrongly. `contextMenu.anchor` is no longer consulted to decide whether
+  Drop may ask.
+- **A give row selects; it does not give.** Every row used to hand the item over on click, which
+  put the irreversible action on the same gesture as looking at who is here. The filled button is
+  disabled until somebody is chosen and then carries the name — "Give 2 to Sofia" — which is the
+  walk's fold-in rule and the one filled button the screen gets.
+- **`scrim="clear"`, not `scrim={false}`.** The mockup has no live grid behind it; this does, and
+  the veil is what stops the dismissing click landing on a slot and starting another drag. It
+  paints nothing, so the no-veil rule is kept.
+- **Rows carry `#id` and no job or distance.** The mockup's people have a rank and a range;
+  `getGiveTargets` answers with a server id and a name, and inventing the other two would be
+  drawing data the client does not have.
+
+**Every server message shape is unchanged.** `giveItemTo` still sends `{ target, slot, count }`,
+`giveItem` still sends `{ slot, count }`, and Split/Drop still resolve through `onDrop`'s existing
+`amount` parameter. No Lua touched, no NUI callback renamed.
+
+**Hints.** A bottom-left `KeyHints tone="ambient"` plate was added to the main inventory screen
+(Escape only — nothing else here has no other affordance). A dialog puts its own plate in that
+same corner through `Shell`'s hint slot — `enter Confirm · esc Cancel` — and the inventory's
+stands down while one is up, because two plates in one corner is two answers about one key.
+Neither plate paints a ground: `KeyHints`' own rule is that a hint cluster is never a panel, and
+this resource had already settled that for the plate in that corner before the mockup drew a
+filled one.
+
+### Weapon attachments, as a screen with the live model on it
+
+The row's fourth item shipped on 2026-09-05, and the plan that used to sit here is what it was
+built from. `AttachmentPanel.svelte` is no longer a 340px card listing what happens to be fitted
+with an x beside each: it is the gallery's wide `Panel` -- the weapon as the head, a transparent
+stage on the left with the model in it, the point's candidates and all the points as `Row`s on the
+right, `Strip all` and one filled `Fit` in the foot.
+
+**The stage is a hole and Lua fills it.** `modules/weaponstage/client.lua` is new and is the whole
+of the other half: on open it spawns a `CreateWeaponObject` twelve metres above the player, gives
+it the components the slot's metadata says are fitted, and frames it with a scripted camera into
+the rectangle the page reports. The framing arithmetic -- distance and two shifts solved from a
+screen rect, a fill and a field of view -- is `ghst_customs/client/camera.lua`'s, GPL to GPL; the
+orbit-and-zoom lifecycle is `ghst_appearance/client/camera.lua`'s. What is new is that the rect is
+*given* rather than read out of a config: the page owns its layout and is the only thing that knows
+where the hole ended up, so it measures its own element with a `ResizeObserver` and posts viewport
+fractions.
+
+**The dots are the page's; the projection is Lua's.** Each frame the module resolves every point to
+a world position -- a weapon-model bone (`WAPScop`, `WAPSupp`, `WAPClip`, `WAPFlsh`, `WAPGrip`)
+where one resolves, a fraction of the model's own bounding box where none does -- projects it with
+`GetScreenCoordFromWorldCoord`, divides by the rect it already holds, and pushes
+`{ id, x, y, visible }` per point. Fractions of the *stage*, not of the screen, so the page places a
+dot at `left: x%` with no arithmetic and no second copy of the rect, and a fake point in the harness
+is a pair of numbers a human can read off the mockup. An unchanged frame sends nothing.
+
+**A point is a component `type`.** The seven ids -- sight, muzzle, barrel, flashlight, grip,
+magazine, skin -- are exactly the seven distinct `type` values in `data/weapons.lua`'s `Components`,
+so there is no second vocabulary to maintain and a component added later lands on a point that
+already exists. A point the weapon takes nothing for is not drawn at all: `DoesWeaponTakeWeaponComponent`
+answers which candidates are real for this weapon, which is why the catalogue is built client-side
+rather than in the page.
+
+**No second way to attach anything.** Fitting is `useItem` on the inventory slot holding the part --
+the same call right-clicking it in the grid makes, reaching `client.lua`'s `useSlot` and its
+`data.component` branch -- and Lua sends that slot with each candidate so the page never has to
+find it. Removing is `removeComponent`, which this panel already used; `Strip all` is that call once
+per fitted part, because it always was per part. "None" is a candidate in the same list rather than
+an x on a row: one list, one commit button.
+
+**The refusals are rows, not absences.** The existing rule -- Lua refuses on a weapon that is not
+the one in hand and notifies separately -- is kept as the reason under the row and as a disabled
+`Fit`. A part the player does not carry says "Not in your bag" rather than vanishing.
+
+**Neither side is optimistic.** Both calls answer with a bare acknowledgement and the real change
+arrives as `refreshSlots`, so the screen watches the slot's `metadata.components` in the store and
+posts `refreshWeaponStage` when it moves. That is also why the effect reads nothing else: the
+refresh answers with a `weaponStage` message, and an effect that read `stage` would wake itself.
+
+**Five new NUI callbacks and two new messages**, all client-side, none of them a rename:
+`openWeaponStage { slot, rect }`, `weaponStageRect { x, y, w, h }`, `weaponStageOrbit { dx, dy }`,
+`weaponStageZoom { delta }`, `refreshWeaponStage`, `closeWeaponStage`; and back the other way
+`weaponStage { slot, live, inHand, points[] }` and `weaponPoints { points[] }`. All six callbacks
+and both messages are mirrored in the dev drawer -- `openWeaponStage` and `refreshWeaponStage` push
+the fixture catalogue, and orbit and zoom move the fake dots, because a drag that visibly does
+nothing is indistinguishable from a drag that is not wired up.
+
+**What is left for a live session.** Three things cannot be checked from here:
+
+1. **Which bones resolve on which models.** Every point falls back to a bounding-box offset, so a
+   missing bone is a dot in roughly the right place rather than a crash -- but roughly is not
+   measured.
+2. **The lift.** Twelve metres straight up keeps the backdrop to sky and keeps the object with the
+   player; indoors it is a ceiling.
+3. **Legibility through the panel.** The gallery draws the stage inside the panel's plane, and a
+   child cannot subtract its parent's background, so the model is read through `--surface-panel`'s
+   translucency. If that is too dark in game the fix is a lighter surface behind the stage, not a
+   second panel.
 
 ## Where the backlog lives
 

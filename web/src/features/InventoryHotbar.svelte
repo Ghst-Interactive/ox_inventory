@@ -175,6 +175,26 @@
     width: var(--slot-size);
     height: var(--slot-size);
     background-color: var(--surface-ambient);
+    text-shadow: var(--ink-scrim);
+    /*
+     * AND NO BLUR IS AVAILABLE HERE, stated on this UI's most-seen surface rather than left
+     * as an absence: the bar is the only part of the inventory on screen during normal play,
+     * with the panes closed and the player driving or shooting.
+     *
+     * `backdrop-filter` does nothing over the game. CEF paints the page and the engine
+     * composites that result over the rendered frame, so within the browser layer there is
+     * nothing behind these chips to blur. The blur a translucent surface is designed to sit
+     * on comes from the game — `TriggerScreenblurFadeIn`, which Utils.blurIn raises when the
+     * inventory opens — and it is full-screen by nature: right for a pane the player has
+     * stopped to read, wrong for chrome that is up while they play. theme/tokens.css carries
+     * the long version.
+     *
+     * So a slot is translucent-and-sharp over live geometry, permanently, and its legibility
+     * is bought entirely by the ambient plane's alpha and `--ink-scrim` behind the ink. What
+     * separates it from the world is `--border-ambient`'s white edge and the tight
+     * `--shadow-ambient`, and that has to be per-slot: `.hotbar` is a bare flex row with
+     * `--space-1-5` gaps and no fill of its own, so there is no container plane to carry it.
+     */
     background-size: 62%;
     background-position: center;
     background-repeat: no-repeat;

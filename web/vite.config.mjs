@@ -11,8 +11,14 @@ export default defineConfig({
   // runtime, not bundled. Nothing here should be copied into the build.
   publicDir: false,
   server: {
-    // ox_lib is on 3000 and ox_target on 3001; all three can run at once.
-    port: 3002,
+    // PORT wins where it is set, because two chats previewing the same resource is two vite
+    // servers wanting one port, and the second one loses. The preview manager assigns a free
+    // port and hands it over this way; the constant is what `pnpm run dev` in a terminal gets.
+    //
+    // strictPort either way, so a busy port is an error rather than vite quietly binding a
+    // different one and leaving whoever asked watching the wrong address.
+    port: Number(process.env.PORT) || 3002,
+    strictPort: true,
   },
   build: {
     // Must stay 'build': fxmanifest.lua:33 declares `ui_page 'web/build/index.html'`.

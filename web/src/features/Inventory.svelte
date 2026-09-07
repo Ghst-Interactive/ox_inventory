@@ -17,10 +17,13 @@
   import {
     closeContextMenu,
     closeGivePicker,
-    closeSplitPrompt,
+    closeCountPrompt,
     closeTooltip,
     closeWeaponPanel,
+    countPrompt,
+    givePicker,
     ui,
+    weaponPanel,
   } from '../lib/ui.svelte';
   import { onUse } from '../lib/actions';
   import { play } from '../lib/audio';
@@ -31,8 +34,10 @@
   import GivePicker from './GivePicker.svelte';
   import InventoryControl from './InventoryControl.svelte';
   import InventoryGrid from './InventoryGrid.svelte';
-  import SplitPrompt from './SplitPrompt.svelte';
+  import CountPrompt from './CountPrompt.svelte';
   import Tooltip from './Tooltip.svelte';
+  import KeyHints from '../lib/KeyHints.svelte';
+  import { locale } from '../lib/state.svelte';
 
   /**
    * The two panes and the messages that drive them.
@@ -86,7 +91,7 @@
     clearContainer();
     closeTooltip();
     closeContextMenu();
-    closeSplitPrompt();
+    closeCountPrompt();
     closeWeaponPanel();
     closeGivePicker();
   }
@@ -211,6 +216,13 @@
     }
   }
 
+  /**
+   * A dialog brings its own hint plate, in the same corner, and Escape means something else
+   * while one is up. Two plates saying two things about one key is the reading the walk's
+   * "minimal, usually only esc" rule exists to prevent, so this one stands down.
+   */
+  const dialogUp = $derived(countPrompt.open || givePicker.open || weaponPanel.slot !== null);
+
   onDestroy(() => {
     offVisible();
     offClose();
@@ -239,16 +251,36 @@
     <InventoryGrid inventory={inv.rightInventory} />
   </div>
 
+  <!-- Bottom-left, minimal, ambient — the one hint plate every screen in the walk carries.
+       Nothing here needs the tab/space/lmb/rmb list the gallery mock sketched: those are
+       drag gestures a player discovers by dragging, and Escape is the one thing that has
+       no other affordance on screen. -->
+  {#if !dialogUp}
+    <div class="hint-plate">
+      <KeyHints tone="ambient" hints={[{ key: 'esc', does: locale.ui_close || 'Close' }]} />
+    </div>
+  {/if}
+
   <!-- Both are fixed-position and viewport-clamped, so they sit outside the wrapper
        rather than inside a pane that would clip them. -->
   <Tooltip />
   <ContextMenu />
-  <SplitPrompt />
+  <CountPrompt />
   <AttachmentPanel />
   <GivePicker />
 {/if}
 
 <style>
+  /* Fixed to the viewport corner, same edge the tree's other ambient plates hold —
+     never inside `.wrapper`, whose padding answers the dev drawer rather than the
+     screen edge. */
+  .hint-plate {
+    position: fixed;
+    left: var(--space-4);
+    bottom: var(--space-4);
+    z-index: 60;
+  }
+
   /*
    * Centred with flexbox rather than the usual top/left 50% plus a translate.
    *
@@ -309,13 +341,14 @@
 
   /* The player's own pane keeps its five rows whatever happens. Addressed by position
      rather than :first-child, which would also match it when it is the only pane here and
-     hand it the shrinking rule below. */
-  .column > :global(.pane:nth-child(1)) {
+     hand it the shrinking rule below. `.w-bag` is InventoryGrid's own root now that it
+     wraps a kit `Panel` rather than a hand-rolled `.pane` section. */
+  .column > :global(.w-bag:nth-child(1)) {
     flex: none;
   }
 
   /* The bag, second and last, is the one that gives way — see .column. */
-  .column > :global(.pane:nth-child(2)) {
+  .column > :global(.w-bag:nth-child(2)) {
     flex: 0 1 auto;
     min-height: 0;
   }

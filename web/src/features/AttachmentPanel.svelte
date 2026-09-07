@@ -1,376 +1,652 @@
 <script lang="ts">
-  import { fade, scale } from 'svelte/transition';
-  import { getItemData, getItemUrl } from '../lib/helpers';
+  import { onDestroy } from 'svelte';
   import { inv } from '../lib/inventory.svelte';
-  import { fetchNui } from '../lib/nui';
+  import { fetchNui, onNuiEvent } from '../lib/nui';
   import { items as itemDefs, locale } from '../lib/state.svelte';
   import { closeWeaponPanel, weaponPanel } from '../lib/ui.svelte';
-  import Icon from '../lib/Icon.svelte';
-  import { X } from '../lib/icons';
-  import WeightBar from './WeightBar.svelte';
+  import Button from '../lib/Button.svelte';
+  import EmptyState from '../lib/EmptyState.svelte';
+  import KeyHints from '../lib/KeyHints.svelte';
+  import Panel from '../lib/Panel.svelte';
+  import Row from '../lib/Row.svelte';
+  import Shell from '../lib/Shell.svelte';
 
   /**
-   * What is bolted to a weapon, and taking it off again.
+   * WEAPON ATTACHMENTS, as a screen with the live model on it.
    *
-   * This replaces the "Remove attachments" submenu in the right-click menu, which listed
-   * parts as text and closed itself after each one — taking three things off a rifle meant
-   * opening the same menu three times, reading three names you had to already know, and
-   * getting no confirmation that any of it worked.
+   * `docs/ui-tdu.md` §8's row for this resource: *"weapon attachments as a screen with the LIVE
+   * weapon model orbited like the ped and its points projected on"*. The gallery draws it in
+   * `Tools/ghst_template/web/src/dev/mockups/screens/Inventory.svelte`, view `attachments`.
+   *
+   * What this replaced was a 340px card listing what happened to be fitted, each with an ×. It
+   * could take a part off and it could not put one on, so fitting a suppressor meant closing the
+   * card, finding the suppressor in the grid, and right-clicking Use — a different gesture, in a
+   * different place, for the other half of one job. The screen does both from one list.
+   *
+   * ## The stage is a hole, and this side does not know what is in it
+   *
+   * CEF cannot see the renderer, so the weapon is not a picture here: `modules/weaponstage/
+   * client.lua` spawns a weapon object, frames it into the rectangle this page leaves open, and
+   * pushes back where each attachment point landed. The page's whole part in that is to measure
+   * its own stage element, report the rect in viewport fractions, and place a dot at each pair of
+   * numbers that comes back. Every gesture is the same shape: a drag is reported as a delta, and
+   * Lua decides what a delta means, so the clamp lives in one place.
+   *
+   * The mock draws the stage inside the panel's plane rather than as a true cut-out — a child
+   * cannot subtract its parent's background — so the model is read through `--surface-panel`'s
+   * translucency. That is what the gallery shows and it is the one thing here that has to be
+   * looked at in game.
+   *
+   * ## Fitting and removing use the paths that were already there
+   *
+   * Fitting a part is `useItem` on the inventory slot holding it, which is exactly what
+   * right-clicking it in the grid does (`client.lua`'s `useSlot`, the `data.component` branch);
+   * removing one is `removeComponent`, which this panel already used. Neither is new, and neither
+   * is optimistic: both are answered with a bare acknowledgement and the real change arrives later
+   * as `refreshSlots`, so the screen watches the store for the part to move and asks Lua to
+   * recompute when it does.
    */
 
-  /**
-   * Read live from the store rather than captured when the panel opened.
-   *
-   * removeComponent answers with a bare acknowledgement and the actual change arrives
-   * later as refreshSlots, so a captured copy would never lose the part you just removed.
-   */
+  /** Read live from the store — see the note on `weaponPanel` in `lib/ui.svelte.ts`. */
   const item = $derived(
     weaponPanel.slot !== null ? inv.leftInventory.items[weaponPanel.slot - 1] : undefined,
   );
 
   const open = $derived(!!item?.name);
-  const components = $derived<string[]>(item?.metadata?.components ?? []);
+
+  /** An attachment point on this weapon, and everything that could go on it. */
+  interface Option {
+    name: string;
+    label: string;
+    /** The player-inventory slot holding one, or absent — "Not in your bag". */
+    slot?: number;
+    fitted: boolean;
+  }
+
+  interface Point {
+    id: string;
+    /** The item name of what is on it, or absent. */
+    fitted?: string;
+    options: Option[];
+  }
+
+  interface StagePayload {
+    slot: number;
+    /** Whether there is a model on the stage. False falls back to the rows alone. */
+    live: boolean;
+    /** Fitting and removing both refuse unless the weapon is the one in hand. */
+    inHand: boolean;
+    points: Point[];
+  }
+
+  let stage = $state<StagePayload | null>(null);
+  let dots = $state<Array<{ id: string; x: number; y: number; visible: boolean }>>([]);
+
+  let point = $state('');
+  /** The candidate the Fit button would commit. `null` is the "None" row: take off what is on. */
+  let choice = $state<string | null>(null);
+
+  const current = $derived(stage?.points.find((p) => p.id === point));
 
   /**
-   * Ask for the full definition of each fitted part.
+   * Move to a point, and open it on what is already fitted.
    *
-   * A component already *has* a definition — modules/items/shared.lua folds every entry in
-   * data.weapons into the same ItemList as ordinary items, so `init` sends one. But `init`
-   * sends an eight-key summary (label, stack, close, count, description, buttons, ammoName,
-   * image) and the socket a part fits, `type`, is not among them. getItemData answers with
-   * the whole shared table, so that is where the socket comes from.
-   *
-   * Hence the guard is on `type`, not on the definition existing: guarding on the latter
-   * looked right in the harness and would have fetched nothing at all in game. Asked names
-   * are remembered so a part whose definition genuinely has no type is not re-fetched on
-   * every render.
+   * The candidate does not survive the move: a player who was looking at a scope and clicks the
+   * muzzle is not still choosing the scope, and a `Fit` that committed the old one would be the
+   * screen acting on something no longer on the page. Set here rather than in an effect, because
+   * it is a consequence of the click and not of the value.
    */
-  const asked = new Set<string>();
+  function selectPoint(id: string) {
+    point = id;
+    choice = stage?.points.find((p) => p.id === id)?.fitted ?? null;
+  }
 
-  $effect(() => {
-    for (const name of components) {
-      if (itemDefs[name]?.type || asked.has(name)) continue;
+  const offStage = onNuiEvent<StagePayload>('weaponStage', (data) => {
+    stage = data;
 
-      asked.add(name);
-      getItemData(name);
-    }
+    // A point that has gone — the weapon changed underneath us — must not leave the selection
+    // pointing at nothing, and the first point is the one the model is turned towards anyway.
+    if (!data.points.some((p) => p.id === point)) point = data.points[0]?.id ?? '';
+
+    // And re-open on whatever is fitted now, which is the half a refresh after a fit exists for.
+    choice = data.points.find((p) => p.id === point)?.fitted ?? null;
   });
 
-  const label = (name: string) => itemDefs[name]?.label || name;
+  const offPoints = onNuiEvent<{ points: typeof dots }>('weaponPoints', (data) => {
+    dots = data.points;
+  });
 
-  /** 'muzzle' -> 'Muzzle'. The socket names are lowercase single words in data/weapons.lua. */
-  const socket = (name: string) => {
-    const kind = itemDefs[name]?.type;
-    return kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : '';
+  onDestroy(() => {
+    offStage();
+    offPoints();
+  });
+
+  /**
+   * A point's name.
+   *
+   * The English default is written here as well as in `locales/en.json`, which is the idiom every
+   * string in this file already follows: the page renders before `init` lands and always has, and
+   * the harness has no Lua to send one at all — an id showing through is the bug that reads as a
+   * missing feature.
+   */
+  const POINT_NAMES: Record<string, string> = {
+    sight: 'Scope',
+    muzzle: 'Muzzle',
+    barrel: 'Barrel',
+    flashlight: 'Flashlight',
+    grip: 'Grip',
+    magazine: 'Magazine',
+    skin: 'Skin',
   };
 
+  const pointLabel = (id: string) => locale[`ui_point_${id}`] || POINT_NAMES[id] || id;
+
   /**
-   * A removal that has been asked for but not yet confirmed.
+   * What is on a point, in words.
    *
-   * Deliberately not an optimistic removal. Lua refuses the request outright when the
-   * weapon is not the one in hand — it answers the callback either way and notifies the
-   * player separately — so a part taken off the list optimistically would have to be put
-   * back, and there is no message that says to. Dimming for a moment says "sent", which
-   * is all this side actually knows.
+   * Read out of the point's own candidate list rather than out of `items`: a component's
+   * definition is not in the `init` summary — the old card had to fetch each one with
+   * `getItemData` for exactly that reason — and Lua already sends a label with every candidate,
+   * so the second lookup would be a second answer to a question that is already answered.
    */
-  const PENDING_MS = 1200;
-  let pending = $state<Record<string, boolean>>({});
-  const timers: Array<ReturnType<typeof setTimeout>> = [];
+  const labelOf = (p?: Point) => {
+    if (!p?.fitted) return locale.ui_no_attachments || 'Nothing fitted';
 
-  function remove(component: string) {
-    if (weaponPanel.slot === null) return;
+    return p.options.find((o) => o.name === p.fitted)?.label || itemDefs[p.fitted]?.label || p.fitted;
+  };
 
-    pending[component] = true;
-    timers.push(setTimeout(() => delete pending[component], PENDING_MS));
+  /* ---- the stage rect, and the model on it -------------------------------- */
 
-    fetchNui('removeComponent', { component, slot: weaponPanel.slot });
+  let stageEl = $state<HTMLElement | null>(null);
+
+  /**
+   * Tell Lua where the hole is, in viewport fractions.
+   *
+   * A `ResizeObserver` rather than a one-shot measurement on open: the rect moves when the window
+   * is resized, when the interface scale changes, and — the one that actually bites — on the frame
+   * after mount, because the panel is still laying out when the effect first runs.
+   */
+  function report(el: HTMLElement) {
+    const box = el.getBoundingClientRect();
+
+    if (!box.width || !box.height) return;
+
+    return {
+      x: box.left / window.innerWidth,
+      y: box.top / window.innerHeight,
+      w: box.width / window.innerWidth,
+      h: box.height / window.innerHeight,
+    };
   }
 
-  // Clear the pending marks whenever the panel closes, so re-opening it is not haunted by
-  // a request from last time.
   $effect(() => {
-    if (open) return;
+    const el = stageEl;
+    const slot = weaponPanel.slot;
 
-    timers.splice(0).forEach(clearTimeout);
-    pending = {};
+    if (!el || slot === null) return;
+
+    let started = false;
+
+    const observer = new ResizeObserver(() => {
+      const rect = report(el);
+
+      if (!rect) return;
+
+      if (!started) {
+        started = true;
+        fetchNui('openWeaponStage', { slot, rect });
+      } else {
+        fetchNui('weaponStageRect', rect);
+      }
+    });
+
+    observer.observe(el);
+
+    return () => {
+      observer.disconnect();
+      fetchNui('closeWeaponStage', {});
+      stage = null;
+      dots = [];
+    };
   });
 
-  function onkeydown(event: KeyboardEvent) {
-    if (!open || event.key !== 'Escape') return;
+  /**
+   * What is fitted, as the store sees it — the trigger for asking Lua to recompute.
+   *
+   * `refreshSlots` is the only honest signal that a fit or a removal actually happened; a timer
+   * after the click would either fire before the server answered or long after. Joined into a
+   * string so the effect compares by value: the metadata array is replaced wholesale on every
+   * refresh, so comparing the reference would re-run on every unrelated slot change.
+   *
+   * The first run is skipped deliberately, and the effect reads *nothing* but that string:
+   * `refreshWeaponStage` answers with a `weaponStage` message, so an effect that also read `stage`
+   * would be woken by its own reply and would never stop.
+   */
+  const fittedNow = $derived(((item?.metadata?.components as string[]) ?? []).join(','));
 
-    // Escape also closes the inventory; this is on top, so it wins.
-    event.stopPropagation();
-    closeWeaponPanel();
+  let watching = false;
+
+  $effect(() => {
+    fittedNow;
+
+    if (!watching) {
+      watching = true;
+      return;
+    }
+
+    fetchNui('refreshWeaponStage', {});
+  });
+
+  /* ---- orbit and zoom ----------------------------------------------------- */
+
+  /**
+   * Degrees per pixel. Slower vertically than horizontally, because the pitch is clamped to a
+   * third of the arc the yaw has and matching the two makes the vertical feel like it is stuck.
+   */
+  const ORBIT_X = -0.4;
+  const ORBIT_Y = 0.2;
+
+  let dragging = $state(false);
+
+  /**
+   * A press that has not yet become a drag.
+   *
+   * The pointer is captured on the first *movement*, not on the press. Capturing on `pointerdown`
+   * redirects every later event to the stage, so the click never reaches the dot that was pressed
+   * — picking a point by clicking its dot silently stopped working, which reads as a dead button.
+   * Three pixels is the usual slop between "clicked" and "started to drag".
+   */
+  const SLOP = 3;
+  let pending: { x: number; y: number; id: number } | null = null;
+
+  function onpointerdown(event: PointerEvent) {
+    if (event.button !== 0) return;
+
+    pending = { x: event.clientX, y: event.clientY, id: event.pointerId };
   }
 
-  const serial = $derived(item?.metadata?.serial as string | undefined);
+  function onpointermove(event: PointerEvent) {
+    if (!pending) return;
+
+    if (!dragging) {
+      if (Math.abs(event.clientX - pending.x) < SLOP && Math.abs(event.clientY - pending.y) < SLOP) return;
+
+      dragging = true;
+      (event.currentTarget as HTMLElement).setPointerCapture(pending.id);
+    }
+
+    fetchNui('weaponStageOrbit', {
+      dx: event.movementX * ORBIT_X,
+      dy: event.movementY * ORBIT_Y,
+    });
+  }
+
+  function onpointerup(event: PointerEvent) {
+    if (dragging) (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
+
+    dragging = false;
+    pending = null;
+  }
+
+  // Positive delta is a scroll away, which should make the model smaller — `fill` is how much of
+  // the stage it spans, so the sign flips here rather than in Lua.
+  function onwheel(event: WheelEvent) {
+    fetchNui('weaponStageZoom', { delta: event.deltaY > 0 ? -0.06 : 0.06 });
+  }
+
+  /* ---- fitting ------------------------------------------------------------ */
+
+  const chosen = $derived(current?.options.find((o) => o.name === choice));
+
+  /**
+   * Whether Fit would do anything, and the words on the button.
+   *
+   * Three refusals, and none of them hides a row: the weapon is not in your hands, the part is not
+   * in your bag, or what you picked is already on. The existing rule — Lua refuses a removal on a
+   * weapon that is not in hand and says so itself — is kept as the reason on the rows rather than
+   * as a row that is not drawn.
+   */
+  const canFit = $derived.by(() => {
+    if (!stage?.inHand || !current) return false;
+    if (choice === null) return !!current.fitted;
+
+    return !!chosen && !chosen.fitted && chosen.slot !== undefined;
+  });
+
+  function fit() {
+    if (!canFit || weaponPanel.slot === null || !current) return;
+
+    if (choice === null) {
+      if (current.fitted) fetchNui('removeComponent', { component: current.fitted, slot: weaponPanel.slot });
+      return;
+    }
+
+    // The slot is Lua's own answer to "where is one of these", sent with the catalogue. Using it
+    // is the same call the grid's right-click Use makes.
+    if (chosen?.slot !== undefined) fetchNui('useItem', chosen.slot);
+  }
+
+  /** Every fitted part off, one call each — `removeComponent` is per part and always was. */
+  function stripAll() {
+    if (!stage?.inHand || weaponPanel.slot === null) return;
+
+    for (const p of stage.points) {
+      if (p.fitted) fetchNui('removeComponent', { component: p.fitted, slot: weaponPanel.slot });
+    }
+  }
+
+  const anythingFitted = $derived(!!stage?.points.some((p) => p.fitted));
+
+  function onkeydown(event: KeyboardEvent) {
+    if (!open) return;
+
+    // Escape also closes the inventory and Enter is not claimed by it; this is on top, so it takes
+    // both first and says so.
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      closeWeaponPanel();
+    } else if (event.key === 'Enter') {
+      event.stopPropagation();
+      fit();
+    }
+  }
+
+  /* ---- the head ----------------------------------------------------------- */
+
+  const blurb = $derived.by(() => {
+    const parts: string[] = [];
+    const serial = item?.metadata?.serial as string | undefined;
+
+    if (serial) parts.push(serial);
+    if (typeof item?.metadata?.ammo === 'number') {
+      parts.push(`${item.metadata.ammo} ${locale.ui_rounds || 'rounds'}`);
+    }
+    if (item?.durability !== undefined) {
+      parts.push(`${Math.trunc(item.durability)}% ${locale.ui_condition || 'condition'}`);
+    }
+
+    return parts.join(' · ');
+  });
 </script>
 
 <svelte:window {onkeydown} />
 
 {#if open && item}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="scrim" onclick={closeWeaponPanel} transition:fade={{ duration: 120 }}>
+  <Shell scrim="clear" onscrim={closeWeaponPanel}>
+    {#snippet hints()}
+      <!-- Bottom left, ambient, white type — and it says what the gestures on the stage are,
+           because a model you can orbit gives no other hint that you can. -->
+      <div class="plate">
+        <KeyHints
+          tone="ambient"
+          layout="inline"
+          hints={[
+            { key: 'lmb', does: locale.ui_orbit || 'Orbit · pick a point' },
+            { key: 'wheel', does: locale.ui_zoom || 'Zoom' },
+            { key: 'enter', does: locale.ui_fit || 'Fit' },
+            { key: 'esc', does: locale.ui_back_to_bag || 'Back to the bag' },
+          ]}
+        />
+      </div>
+    {/snippet}
+
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
-      class="dialog"
+      class="screen"
       role="dialog"
       aria-modal="true"
       tabindex="-1"
+      aria-label={locale.ui_attachments || 'Attachments'}
       onclick={(event) => event.stopPropagation()}
-      transition:scale={{ duration: 150, start: 0.96 }}
+      oncontextmenu={(event) => event.preventDefault()}
     >
-      <header>
-        <div class="art" style:background-image="url({getItemUrl(item.name!)})"></div>
+      <Panel
+        eyebrow={locale.ui_weapon || 'Weapon'}
+        title={item.metadata?.label || itemDefs[item.name!]?.label || item.name!}
+        {blurb}
+      >
+        <div class="weapon">
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="stage"
+            bind:this={stageEl}
+            class:dragging
+            {onpointerdown}
+            {onpointermove}
+            {onpointerup}
+            onpointercancel={onpointerup}
+            {onwheel}
+          >
+            {#if stage && !stage.live}
+              <!-- The fallback the plan asked for: no model, but the rows still work. -->
+              <p class="offline">{locale.ui_no_stage || 'The weapon cannot be shown here'}</p>
+            {/if}
 
-        <div class="identity">
-          <p class="name">{item.metadata?.label || itemDefs[item.name!]?.label || item.name}</p>
-          {#if serial}
-            <p class="serial">{serial}</p>
-          {/if}
-        </div>
+            {#each dots as dot (dot.id)}
+              {#if dot.visible}
+                {@const fitted = !!stage?.points.find((p) => p.id === dot.id)?.fitted}
+                <button
+                  class="pt"
+                  class:on={dot.id === point}
+                  class:fitted
+                  style:left="{dot.x * 100}%"
+                  style:top="{dot.y * 100}%"
+                  onclick={() => selectPoint(dot.id)}
+                  aria-label={pointLabel(dot.id)}
+                >
+                  <span class="dot"></span>
+                  <span class="ptl">{pointLabel(dot.id)}</span>
+                </button>
+              {/if}
+            {/each}
+          </div>
 
-        <button class="close" onclick={closeWeaponPanel} aria-label={locale.ui_close || 'Close'}>
-          <Icon node={X} size="12px" />
-        </button>
-      </header>
-
-      {#if item.durability !== undefined}
-        <div class="condition">
-          <span class="caption">{locale.ui_durability || 'Durability'}</span>
-          <WeightBar percent={item.durability} durability />
-          <span class="figure">{Math.trunc(item.durability)}</span>
-        </div>
-      {/if}
-
-      {#if components.length}
-        <ul class="parts">
-          {#each components as component (component)}
-            <li class="part" class:pending={pending[component]}>
-              <div class="thumb" style:background-image="url({getItemUrl(component)})"></div>
-
-              <div class="text">
-                <span class="part-name">{label(component)}</span>
-                {#if socket(component)}
-                  <span class="socket">{socket(component)}</span>
-                {/if}
+          <aside class="fit">
+            {#if current}
+              <div>
+                <span class="caption">{pointLabel(current.id)}</span>
+                <h2 class="ftitle">{labelOf(current)}</h2>
               </div>
 
-              <button
-                class="detach"
-                onclick={() => remove(component)}
-                aria-label="{locale.ui_remove || 'Remove'} {label(component)}"
-              >
-                <Icon node={X} size="12px" />
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {:else}
-        <p class="empty">{locale.ui_no_attachments || 'Nothing fitted'}</p>
-      {/if}
+              <div class="well">
+                <!-- "None" is a candidate like any other, and picking it is how a part comes off:
+                     one list, one Fit button, rather than a list to put on and an × to take off. -->
+                <Row
+                  label={locale.ui_none || 'None'}
+                  sub={locale.ui_no_attachments || 'Nothing fitted'}
+                  meta={current.fitted ? undefined : locale.ui_fitted || 'Fitted'}
+                  selected={choice === null}
+                  onclick={() => (choice = null)}
+                />
+                {#each current.options as option (option.name)}
+                  <Row
+                    label={option.label}
+                    sub={option.fitted
+                      ? stage?.inHand
+                        ? undefined
+                        : locale.ui_attachments_hint
+                      : option.slot !== undefined
+                        ? locale.ui_in_bag || 'In your bag'
+                        : locale.ui_not_in_bag || 'Not in your bag'}
+                    meta={option.fitted ? locale.ui_fitted || 'Fitted' : undefined}
+                    selected={choice === option.name}
+                    disabled={!option.fitted && option.slot === undefined}
+                    onclick={() => (choice = option.name)}
+                  />
+                {/each}
+              </div>
 
-      <!-- Removal only works on the weapon currently in hand; Lua refuses otherwise and
-           says so itself. Saying it here too means the refusal is not a surprise. -->
-      <p class="note">{locale.ui_attachments_hint || 'Parts can only be removed from the weapon in your hands'}</p>
+              <div class="tight">
+                <span class="caption">{locale.ui_all_points || 'All points'}</span>
+                <div class="well">
+                  {#each stage?.points ?? [] as p (p.id)}
+                    <Row
+                      label={pointLabel(p.id)}
+                      meta={labelOf(p)}
+                      selected={p.id === point}
+                      onclick={() => selectPoint(p.id)}
+                    />
+                  {/each}
+                </div>
+              </div>
+            {:else}
+              <EmptyState message={locale.ui_no_attachments || 'Nothing fitted'} />
+            {/if}
+          </aside>
+        </div>
+
+        {#snippet footer()}
+          <!-- One filled button, and it is the commit. Strip all is neutral beside it. -->
+          <div class="acts">
+            <Button disabled={!stage?.inHand || !anythingFitted} onclick={stripAll}>
+              {locale.ui_strip_all || 'Strip all'}
+            </Button>
+            <Button variant="filled" disabled={!canFit} onclick={fit}>
+              {locale.ui_fit || 'Fit'}
+            </Button>
+          </div>
+        {/snippet}
+      </Panel>
     </div>
-  </div>
+  </Shell>
 {/if}
 
 <style>
-  .scrim {
-    position: fixed;
-    inset: 0;
+  /* Above the two panes and the context menu that opened it. `wide` in the gallery's own
+     vocabulary: 800 at scale 1, which is the two columns plus the stage. */
+  .screen {
+    position: relative;
     z-index: 90;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--scrim);
+    width: calc(800 * var(--ui-px));
+    max-width: 100%;
+    max-height: 100%;
+    pointer-events: auto;
   }
 
-  .dialog {
-    width: 340px;
-    max-width: calc(100vw - 48px);
+  .weapon {
+    display: grid;
+    min-height: 0;
+    gap: var(--space-5);
+    padding: var(--space-4);
+    grid-template-columns: 1fr calc(300 * var(--ui-px));
+  }
+
+  /* Open to the game: nothing painted, a dashed edge to say where the model may go. The panel's
+     own plane is still behind it — see the header. */
+  .stage {
+    position: relative;
+    min-height: calc(320 * var(--ui-px));
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .stage.dragging {
+    cursor: grabbing;
+  }
+
+  .offline {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    margin: 0;
+    transform: translate(-50%, -50%);
+    color: var(--color-dim);
+    font-size: var(--text-meta);
+    text-align: center;
+  }
+
+  .pt {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1-5);
+    transform: translate(-50%, -50%);
+  }
+
+  .dot {
+    width: calc(12 * var(--ui-px));
+    height: calc(12 * var(--ui-px));
+    border: 2px solid var(--color-gray);
+    border-radius: var(--radius-full);
+    background: var(--color-surface);
+  }
+
+  /* A point carrying something reads as filled; the accent is reserved for the one selected. */
+  .pt.fitted .dot {
+    border-color: var(--color-white);
+    background: var(--color-white);
+  }
+
+  .pt.on .dot {
+    border-color: var(--color-primary);
+    background: var(--color-primary);
+    box-shadow: var(--ring-accent);
+  }
+
+  .ptl {
+    padding: var(--space-0-5) var(--space-1-5);
+    border-radius: var(--radius-xs);
+    background: var(--surface-ambient);
+    /* An ambient plate is read against the game, not against the panel — the label sits over the
+       stage, which is open to the world. `contrast.py` credits the scrim, so it has to be drawn. */
+    text-shadow: var(--ink-scrim);
+    color: var(--color-white);
+    font-size: var(--text-micro);
+    letter-spacing: var(--tracking-label);
+    text-transform: uppercase;
+  }
+
+  .pt.on .ptl {
+    color: var(--color-primary);
+  }
+
+  .fit {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    gap: var(--space-3);
+    overflow-y: auto;
+  }
+
+  .tight {
     display: flex;
     flex-direction: column;
-    background: var(--surface-raised);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    box-shadow: inset 0 1px 0 var(--edge-highlight), var(--shadow-panel);
-    overflow: hidden;
+    gap: var(--space-1);
   }
 
-  header {
+  .well {
     display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-3) var(--space-3);
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .art {
-    flex: none;
-    width: 52px;
-    height: 40px;
-    background-color: var(--tint-sunken);
-    background-size: contain;
-    background-position: center;
-    background-repeat: no-repeat;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-  }
-
-  .identity {
-    min-width: 0;
-    flex: 1;
-  }
-
-  .name {
-    margin: 0;
-    color: var(--color-white);
-    font-size: var(--text-sm);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .serial {
-    margin: var(--space-0-5) 0 0;
-    font-family: var(--font-mono);
-    font-size: var(--text-meta);
-    color: var(--color-dim);
-  }
-
-  .close {
-    flex: none;
-    display: flex;
-    padding: var(--space-1);
-    border-radius: var(--radius-full);
-    color: var(--color-dim);
-  }
-
-  .close:hover {
-    color: var(--color-white);
-  }
-
-  .condition {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    border-bottom: 1px solid var(--color-border);
+    flex-direction: column;
   }
 
   .caption {
+    font-family: var(--font-display);
     font-size: var(--text-meta);
     letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--color-dim);
   }
 
-  .condition :global(.track) {
-    flex: 1;
-  }
-
-  .figure {
-    min-width: 26px;
-    text-align: right;
-    font-family: var(--font-mono);
-    font-size: var(--text-meta);
-    color: var(--color-gray);
-  }
-
-  .parts {
-    display: flex;
-    flex-direction: column;
+  .ftitle {
     margin: 0;
-    padding: 0;
-    list-style: none;
+    color: var(--color-white);
+    font-family: var(--font-display);
+    font-size: var(--text-heading);
+    font-weight: var(--font-weight-extrabold);
   }
 
-  .part {
+  .acts {
     display: flex;
-    align-items: center;
+    justify-content: flex-end;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    border-bottom: 1px solid var(--color-border);
-    transition: opacity var(--dur-base) var(--ease-out);
   }
 
-  /* Asked for, not yet confirmed. See the note on PENDING_MS. */
-  .pending {
-    opacity: 0.4;
-  }
-
-  .pending .detach {
-    pointer-events: none;
-  }
-
-  .thumb {
-    flex: none;
-    width: 34px;
-    height: 26px;
-    background-color: var(--tint-sunken);
-    background-size: contain;
-    background-position: center;
-    background-repeat: no-repeat;
-    border-radius: var(--radius-sm);
-  }
-
-  .text {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .part-name {
-    color: var(--color-gray);
-    font-size: var(--text-sm);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .socket {
-    font-size: var(--text-meta);
-    letter-spacing: var(--tracking-label);
-    text-transform: uppercase;
-    color: var(--color-dim);
-  }
-
-  .detach {
-    flex: none;
-    display: flex;
-    padding: var(--space-1);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    color: var(--color-dim);
-    transition:
-      border-color var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out);
-  }
-
-  .detach:hover {
-    border-color: rgba(255, 80, 80, 0.45);  /* CEF 103 has no color-mix() -- see theme/base.css */
-    border-color: color-mix(in srgb, var(--color-danger) 45%, transparent);
-    color: var(--color-danger);
-  }
-
-  .empty {
-    margin: 0;
-    padding: var(--space-4) var(--space-3);
-    text-align: center;
-    color: var(--color-dim);
-    font-size: var(--text-sm);
-  }
-
-  .note {
-    margin: 0;
-    padding: var(--space-2) var(--space-3);
-    color: var(--color-dim);
-    font-size: var(--text-meta);
+  /* No ground, like every other hint plate in this resource. See CountDialog. */
+  .plate {
+    pointer-events: auto;
   }
 </style>

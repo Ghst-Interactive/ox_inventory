@@ -38,6 +38,19 @@ export const nuiMocks: Record<string, unknown | ((data?: unknown) => unknown)> =
   useButton: 1,
   removeComponent: 1,
   removeAmmo: 1,
+
+  /**
+   * The attachments screen's stage. All six are acknowledgements — the answers come back as
+   * `weaponStage` and `weaponPoints` messages, which the dev drawer sends by hand, because the
+   * thing on the other end of these is a renderer and a browser has none.
+   */
+  openWeaponStage: 1,
+  closeWeaponStage: 1,
+  weaponStageRect: 1,
+  weaponStageOrbit: 1,
+  weaponStageZoom: 1,
+  refreshWeaponStage: 1,
+
   exit: 1,
   uiLoaded: 1,
 

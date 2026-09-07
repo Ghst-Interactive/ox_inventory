@@ -178,6 +178,7 @@
     width: 260px;
     padding: var(--space-2) var(--space-3);
     background: var(--surface-raised);
+    text-shadow: none;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     box-shadow: inset 0 1px 0 var(--edge-highlight), var(--shadow-panel);
@@ -198,6 +199,7 @@
   .meta.equipped {
     color: var(--color-primary);
     letter-spacing: var(--tracking-label);
+    font-family: var(--font-display);
     text-transform: uppercase;
     font-size: var(--text-meta);
   }
@@ -214,6 +216,7 @@
     margin: 0 0 var(--space-1);
     font-size: var(--text-meta);
     letter-spacing: var(--tracking-label);
+    font-family: var(--font-display);
     text-transform: uppercase;
     color: var(--color-dim);
     overflow: hidden;
@@ -238,6 +241,7 @@
     flex: none;
     font-size: var(--text-meta);
     letter-spacing: var(--tracking-label);
+    font-family: var(--font-display);
     text-transform: uppercase;
     color: var(--color-primary);
   }

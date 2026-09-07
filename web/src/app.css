@@ -48,12 +48,24 @@
  * slot. Kept as variables because the grid, the drag preview, the hotbar and the
  * notifications all have to agree on them, and they live in five different components.
  *
- * Sized in vh, as upstream did. A FiveM client can be running anything from 720p to
- * 4K, and a slot fixed in px is either a postage stamp on a large display or overflows
- * a small one. The clamp keeps it sane at both extremes — pure vh gets silly on an
- * ultrawide.
+ * THE WALK FOUND THE OLD SIZE TOO BIG. This used to be a viewport-relative clamp so a
+ * slot never became a postage stamp on a large display or overflowed a small one — but
+ * that also meant nothing on screen answered "how big is a bag", which is what the
+ * gallery mock fixed: TWO BAGS AT A FIXED 500PX EACH (`--pane-width`, in `--ui-px` so
+ * the player's interface-size preference still reaches it). `--slot-base` is now derived
+ * from that constant rather than the other way round, by inverting the same sum
+ * `.pane`'s width used to build up from a slot size: five columns, four inter-slot gaps
+ * and the panel's own padding have to fit inside `--pane-width` exactly, so the slot is
+ * whatever is left over divided by the column count.
  */
 :root {
+  /* The bag itself: fixed, not derived from anything about its contents. See above. */
+  --pane-width: calc(500 * var(--ui-px));
+
+  --slot-gap: calc(6 * var(--ui-px));
+  --grid-cols: 5;
+  --grid-rows: 5;
+
   /*
    * Split into a base and a scalar, so somewhere further down the tree can re-derive the
    * size for itself — a three-pane row does, to fit on a narrow client.
@@ -63,12 +75,12 @@
    * nothing to a --slot-size declared here. The descendant has to declare --slot-size
    * again, out of these two parts. Hence a base and a scalar rather than one value.
    */
-  --slot-base: clamp(68px, 9.5vh, 112px);
+  --slot-base: calc(
+    (var(--pane-width) - var(--space-4) * 2 - 2px - var(--slot-gap) * (var(--grid-cols) - 1)) /
+      var(--grid-cols)
+  );
   --slot-scale: 1;
   --slot-size: calc(var(--slot-base) * var(--slot-scale));
-  --slot-gap: 6px;
-  --grid-cols: 5;
-  --grid-rows: 5;
 
   /*
    * How much width the grid's scrollbar actually takes. Overwritten at startup by
@@ -80,11 +92,6 @@
    * which is immediately visible as a lopsided panel.
    */
   --grid-scrollbar: 6px;
-
-  /* The panel's padding, uniform on all four sides. The grid reclaims the scrollbar's
-     width out of the right-hand one with a negative margin, so the columns stay
-     symmetric within it — see InventoryGrid. */
-  --pane-pad: 12px;
 
   /*
    * How far to push the inventory aside for the dev drawer. Always 0 in game — the

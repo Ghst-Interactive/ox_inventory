@@ -33,7 +33,7 @@ local function createCraftingBench(id, data)
 			end
 		end
 
-		if shared.target then
+		if shared.interact then
 			data.points = nil
 		else
 			data.zones = nil
@@ -49,7 +49,7 @@ for id, data in pairs(lib.load('data.crafting') or {}) do createCraftingBench(da
 ---@param index number
 ---@return table?
 local function getCraftingGroups(bench, index)
-	return (shared.target and bench.zones) and bench.zones[index].groups or bench.groups
+	return (shared.interact and bench.zones) and bench.zones[index].groups or bench.groups
 end
 
 ---falls back to player coords if zones and points are both nil
@@ -61,7 +61,7 @@ local function getCraftingCoords(source, bench, index)
 	if not bench.zones and not bench.points then
 		return GetEntityCoords(GetPlayerPed(source))
 	else
-		return shared.target and bench.zones[index].coords or bench.points[index]
+		return shared.interact and bench.zones[index].coords or bench.points[index]
 	end
 end
 

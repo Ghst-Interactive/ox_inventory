@@ -39,6 +39,10 @@ files {
     'web/build/index.html',
     'web/build/assets/*.js',
     'web/build/assets/*.css',
+    -- The bundled font. Vite emits it beside the js and css, and a file not named here is not
+    -- sent to the client at all -- NUI answers the request with "This file is not supported in
+    -- NUI", which reads like a format refusal and is really a missing manifest line.
+    'web/build/assets/*.woff2',
     'web/images/*.png',
     'modules/**/shared.lua',
     'modules/**/client.lua',

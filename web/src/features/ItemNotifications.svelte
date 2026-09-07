@@ -124,6 +124,17 @@
     width: var(--slot-size);
     height: var(--slot-size);
     background-color: var(--surface-ambient);
+    text-shadow: var(--ink-scrim);
+    /*
+     * Ambient chrome over live gameplay, with no blur to be had behind it — the hotbar's slot
+     * rule carries that reasoning, and this is the same plane in the same conditions.
+     *
+     * The separation has to be per-card, because there is no container plane to hang it on:
+     * `.stack` is a `pointer-events: none` flex column with gaps and no fill, sized by
+     * whatever is currently queued. So each card carries its own — the tinted action strip,
+     * the accented border and `--shadow-ambient`, with `--ink-scrim` behind the ink — and
+     * that is also what carries gain and loss apart at a glance.
+     */
     background-size: 62%;
     background-position: center;
     background-repeat: no-repeat;
@@ -140,6 +151,7 @@
     color: var(--color-white);
     font-size: var(--text-meta);
     letter-spacing: var(--tracking-label);
+    font-family: var(--font-display);
     text-transform: uppercase;
     text-align: center;
   }

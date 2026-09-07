@@ -7,6 +7,9 @@ require 'modules.prefs.client'
 
 local Utils = require 'modules.utils.client'
 local Weapon = require 'modules.weapon.client'
+-- The attachments screen's model, camera and projected points. It reads `PlayerData` and the
+-- `getCurrentWeapon` export below, and owns its own NUI callbacks, so nothing here calls into it.
+require 'modules.weaponstage.client'
 local currentWeapon
 
 exports('getCurrentWeapon', function()
@@ -316,8 +319,8 @@ function client.openInventory(inv, data)
                 coords = GetEntityCoords(cache.ped)
                 distance = 2
             else
-                coords = shared.target and right.zones and right.zones[data.index].coords or right.points and right.points[data.index]
-                distance = coords and shared.target and right.zones[data.index].distance or 2
+                coords = shared.interact and right.zones and right.zones[data.index].coords or right.points and right.points[data.index]
+                distance = coords and shared.interact and right.zones[data.index].distance or 2
             end
 
             right = {
@@ -941,7 +944,7 @@ local function registerCommands()
 
 			if not entity then return end
 
-			if not shared.target and entityType == 3 then
+			if not shared.interact and entityType == 3 then
 				local model = GetEntityModel(entity)
 
 				if Inventory.Dumpsters:includes(model) then
@@ -1458,7 +1461,7 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 			price = data.price,
 			invId = id,
 			nearby = nearbyLicense,
-			message = ('**%s**  \n%s'):format(locale('purchase_license', data.name), locale('interact_prompt', GetControlInstructionalButton(0, 38, true):sub(3)))
+			message = ('**%s**  \n%s'):format(locale('purchase_license', data.name), Utils.interactPrompt())
 		})
 	end
 

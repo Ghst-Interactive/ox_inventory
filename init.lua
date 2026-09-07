@@ -17,7 +17,14 @@ shared = {
     framework = GetConvar('inventory:framework', 'esx'),
     playerslots = GetConvarInt('inventory:slots', 50),
     playerweight = GetConvarInt('inventory:weight', 30000),
-    target = GetConvarBool('inventory:target', false),
+    --- **Selected once at boot.** `ghst_interact` is the tree's only interaction layer as of
+    --- 2026-09-05 -- `ox_target` is off this server entirely, and every registration this
+    --- resource makes (models, entities, vehicle classes, and box-shaped places since
+    --- `ghst_interact` grew a volume form) goes through it. `false` is the guard that lets the
+    --- resource run with no interaction layer at all -- dumpsters, trunks, shop peds and box
+    --- zones simply have nothing to interact with -- rather than raising when it is absent.
+    --- Ghst-dev change -- upstream has no such resource.
+    interact = GetResourceState('ghst_interact') == 'started',
     police = json.decode(GetConvar('inventory:police', '["police", "sheriff"]')),
     networkdumpsters = GetConvarBool('inventory:networkdumpsters', false)
 }
@@ -236,12 +243,6 @@ end
 if not LoadResourceFile(shared.resource, 'web/build/index.html') then
     return spamError(
         'UI has not been built, refer to the documentation or download a release build.\n	^3https://overextended.dev/ox_inventory^0')
-end
-
--- No we're not going to support qtarget any longer.
-if shared.target and GetResourceState('ox_target') ~= 'started' then
-    shared.target = false
-    warn('ox_target is not loaded - it should start before ox_inventory')
 end
 
 if lib.context == 'server' then

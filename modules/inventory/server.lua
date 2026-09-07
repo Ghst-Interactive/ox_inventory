@@ -124,7 +124,7 @@ for _, stash in pairs(lib.load('data.stashes') or {}) do
 		slots = stash.slots,
 		maxWeight = stash.weight,
 		groups = stash.groups or stash.jobs,
-		coords = shared.target and stash.target?.loc or stash.coords,
+		coords = shared.interact and stash.target?.loc or stash.coords,
         distance = stash.distance or 10
 	}
 end

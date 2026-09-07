@@ -212,6 +212,7 @@
     display: flex;
     flex-direction: column;
     background: var(--surface-raised);
+    text-shadow: none;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     box-shadow: inset 0 1px 0 var(--edge-highlight), var(--shadow-panel);
@@ -227,12 +228,18 @@
     border-bottom: 1px solid var(--color-border);
   }
 
+  /* The eyebrow, completed: it had the face, the case and the tracking already, and was missing
+     the width axis and the weight that make it read as a heading rather than as small type.
+     Dim rather than white -- the dialog is opaque over a scrim, so the grey tier is legible. */
   header p {
     margin: 0;
     font-size: var(--text-label);
+    font-variation-settings: 'wdth' 112;
+    font-weight: var(--font-weight-bold);
     letter-spacing: var(--tracking-label);
+    font-family: var(--font-display);
     text-transform: uppercase;
-    color: var(--color-gray);
+    color: var(--color-dim);
   }
 
   .close {
@@ -251,13 +258,22 @@
     flex-direction: column;
   }
 
+  /* `border-top` rather than `border-bottom`, so the rule falls between rows and never under the
+     last one. The footer carries its own now -- see below -- because that one separator was the
+     only thing the bottom border was doing beyond the list. Rows are direct children of `.rows`,
+     so `:first-child` really is the first row. */
   .row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
     padding: var(--space-3) var(--space-3);
-    border-bottom: 1px solid var(--color-border);
+    border-top: 1px solid var(--color-border);
+  }
+
+  /* The header's bottom border already separates it from the first row. */
+  .row:first-child {
+    border-top-color: transparent;
   }
 
   .label {
@@ -309,6 +325,7 @@
     color: var(--color-dim);
     font-size: var(--text-meta);
     letter-spacing: var(--tracking-label);
+    font-family: var(--font-display);
     text-transform: uppercase;
     transition:
       background var(--dur-fast) var(--ease-out),
@@ -319,11 +336,20 @@
     color: var(--color-white);
   }
 
+  /*
+   * A SEGMENT KEEPS ITS FILL, and it is now the tree's one selected-wash token.
+   *
+   * The rail every row and field takes is deliberately refused here for `ghst_chat`'s
+   * `Segmented.svelte` reason: a rail needs an edge long enough to read, and a segment this
+   * short inside a one-pixel track has none -- it would land on the track's own divider and
+   * read as a rendering fault. What changes is the token. It was `--layer-selected`, the accent
+   * at 14%, which is a second answer to "this one is chosen" at a different alpha from the
+   * `--primary-glow` a menu row and a focused field both take. The stacked-layer form went with
+   * it: `.option` has no background of its own, so the wash composites over `.segment`'s tint
+   * from an ordinary `background-color` -- exactly as `InputRow`'s `.control:focus` does.
+   */
   .option.on {
-    /* The accent state layer over the well's tint, per tokens.css -- no `color-mix()` and so no
-       hand-computed fallback to keep in step with it. */
-    background-color: var(--tint-sunken);
-    background-image: var(--layer-selected);
+    background-color: var(--primary-glow);
     color: var(--color-primary);
   }
 
@@ -380,6 +406,8 @@
     justify-content: space-between;
     gap: var(--space-3);
     padding: var(--space-2) var(--space-3);
+    /* Not part of the list, so it draws its own rule rather than borrowing the last row's. */
+    border-top: 1px solid var(--color-border);
   }
 
   .note {
@@ -394,6 +422,7 @@
     color: var(--color-gray);
     font-size: var(--text-meta);
     letter-spacing: var(--tracking-label);
+    font-family: var(--font-display);
     text-transform: uppercase;
   }
 

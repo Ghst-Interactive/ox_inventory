@@ -2,7 +2,8 @@
   import { debugData } from '../../lib/nui';
   import { nuiMocks } from '../../lib/mocks';
   import { inv } from '../../lib/inventory.svelte';
-  import { ui } from '../../lib/ui.svelte';
+  import { openCountPrompt, openGivePicker, openWeaponPanel, ui } from '../../lib/ui.svelte';
+  import { locale } from '../../lib/state.svelte';
   import * as fixtures from './fixtures';
 
   /**
@@ -147,6 +148,121 @@
       { metadata: 'type', value: 'Class' },
     ]);
 
+  /* ---- the three dialogs --------------------------------------------------- */
+
+  /**
+   * Give, Split and Drop, opened directly.
+   *
+   * In game each is reached through a gesture the harness cannot stage — a right-click on a
+   * stack, an Alt-released drag, a `getGiveTargets` callback answering with two people — so
+   * without these the three dialogs the design walk redrew could only be seen by playing.
+   * The window is opened first when it is shut, because all three draw over it.
+   */
+  const withInventory = (run: () => void) => {
+    if (!ui.inventoryOpen) send('setupInventory', playerOnly);
+    run();
+  };
+
+  const dialogGive = () =>
+    withInventory(() => openGivePicker(1, 2, fixtures.giveTargets));
+
+  const dialogSplit = () =>
+    withInventory(() =>
+      openCountPrompt(
+        'Bandage',
+        locale.ui_split || 'Split',
+        locale.ui_split_blurb || 'Into a second stack.',
+        12,
+        (amount) => console.info('[dev] split', amount),
+      ),
+    );
+
+  const dialogDrop = () =>
+    withInventory(() =>
+      openCountPrompt(
+        'Bandage',
+        locale.ui_drop || 'Drop',
+        locale.ui_drop_blurb || 'On the ground, where you stand.',
+        12,
+        (amount) => console.info('[dev] drop', amount),
+      ),
+    );
+
+  /* ---- the attachments screen --------------------------------------------- */
+
+  /**
+   * The stage, faked whole.
+   *
+   * In game the page posts `openWeaponStage` and Lua answers with two messages — the catalogue and
+   * the projected points — off the back of a weapon object and a scripted camera. A browser has
+   * neither, so the mocks answer in Lua's place: same two actions, same shapes, so the screen
+   * renders here exactly as it will there and only the numbers are invented.
+   *
+   * The orbit and zoom callbacks move the dots rather than acknowledging silently, because a drag
+   * that visibly does nothing is indistinguishable from a drag that is not wired up.
+   */
+  let points = $state.raw(fixtures.weaponPoints);
+
+  const pushStage = () => {
+    send('weaponStage', fixtures.weaponStage);
+    send('weaponPoints', { points });
+  };
+
+  nuiMocks.openWeaponStage = () => {
+    points = fixtures.weaponPoints;
+    // After the current turn: the page is mid-effect when it posts this, and answering inside that
+    // effect would set state Svelte is still reading.
+    setTimeout(pushStage, 0);
+    return 1;
+  };
+
+  nuiMocks.refreshWeaponStage = () => {
+    setTimeout(pushStage, 0);
+    return 1;
+  };
+
+  nuiMocks.weaponStageOrbit = (data?: unknown) => {
+    const dx = (data as { dx?: number })?.dx ?? 0;
+
+    // A yaw of a degree is roughly a hundredth of the stage across, at the fill Lua opens on.
+    points = points.map((p) => ({ ...p, x: Math.min(0.98, Math.max(0.02, p.x + dx * 0.01)) }));
+    send('weaponPoints', { points });
+    return 1;
+  };
+
+  nuiMocks.weaponStageZoom = (data?: unknown) => {
+    const delta = (data as { delta?: number })?.delta ?? 0;
+    const scale = 1 + delta;
+
+    points = points.map((p) => ({
+      ...p,
+      x: 0.5 + (p.x - 0.5) * scale,
+      y: 0.5 + (p.y - 0.5) * scale,
+    }));
+    send('weaponPoints', { points });
+    return 1;
+  };
+
+  const attachments = () =>
+    withInventory(() => {
+      // Slot 4 is the fixture pistol, and the one `weaponStage` describes.
+      openWeaponPanel(4);
+    });
+
+  const attachmentsDead = () =>
+    withInventory(() => {
+      openWeaponPanel(4);
+      // The fallback: no model on the stage, rows still working.
+      setTimeout(() => send('weaponStage', { ...fixtures.weaponStage, live: false }), 10);
+    });
+
+  const attachmentsStowed = () =>
+    withInventory(() => {
+      openWeaponPanel(4);
+      // Not the weapon in hand: every commit refuses, and the rows have to say why.
+      setTimeout(() => send('weaponStage', { ...fixtures.weaponStage, inHand: false }), 10);
+    });
+
   const GROUPS: Array<[string, Array<[string, () => void]>]> = [
     [
       'Open',
@@ -171,6 +287,22 @@
         ['Max weight → 8kg', shrinkWeight],
         ['Stash → 60 slots', growSlots],
         ['Extra metadata', metadata],
+      ],
+    ],
+    [
+      'Dialogs',
+      [
+        ['Give', dialogGive],
+        ['Split', dialogSplit],
+        ['Drop', dialogDrop],
+      ],
+    ],
+    [
+      'Attachments',
+      [
+        ['Screen', attachments],
+        ['No model (fallback)', attachmentsDead],
+        ['Not in hand', attachmentsStowed],
       ],
     ],
     [
@@ -244,7 +376,8 @@
     width: 220px;
     padding: 16px;
     overflow-y: auto;
-    background: var(--surface-panel);
+    background: var(--glass-panel);
+    text-shadow: var(--ink-scrim);
     border-right: 1px solid var(--color-border);
     z-index: 100;
   }
@@ -259,6 +392,7 @@
     margin-top: 10px;
     font-size: var(--text-meta);
     letter-spacing: var(--tracking-label);
+    font-family: var(--font-display);
     text-transform: uppercase;
     color: var(--color-dim);
   }

@@ -139,23 +139,77 @@ function Inventory.OpenTrunk(entity)
     end
 end
 
-if shared.target then
-    exports.ox_target:addModel(Inventory.Dumpsters, {
-        icon = 'fas fa-dumpster',
-        label = locale('search_dumpster'),
-        onSelect = function(data) return Inventory.OpenDumpster(data.entity) end,
-        distance = 2
-    })
+--- A dumpster and a vehicle boot are both props/entities, `ghst_interact`'s territory since
+--- 2026-08-28. `ox_target` is off this server entirely as of 2026-09-05, so there is nothing left
+--- to fall back to -- `shared.interact` being false just means neither is interactable, the same
+--- guard the rest of this resource keeps.
+if shared.interact then
+    --- Guarded and re-registered the way `ghst_banking`'s `atms.lua` is: `sync.ps1 -e` restarts
+    --- `ghst_interact` on every save during dev, which empties its registry, and a plain call at
+    --- file-load time would only ever run once.
+    local function addInteract()
+        if GetResourceState('ghst_interact') ~= 'started' then return end
 
-    exports.ox_target:addGlobalVehicle({
-        icon = 'fas fa-truck-ramp-box',
-        label = locale('open_label', locale('storage')),
-        distance = 1.5,
-        canInteract = Inventory.CanAccessTrunk,
-        onSelect = function(data)
-            return Inventory.OpenTrunk(data.entity)
-        end
-    })
+        pcall(function()
+            exports.ghst_interact:create({
+                id = 'ox_inventory:dumpster',
+                model = Inventory.Dumpsters,
+                --- A dumpster's model origin is the ground beneath it (the same failure
+                --- `ghst_fuel`'s pumps had). Roughly lid height, and **unmeasured** -- `/ibuild`
+                --- on one of `Inventory.Dumpsters` settles it.
+                offset = vec3(0.0, 0.0, 0.9),
+                options = {
+                    {
+                        icon = 'fas fa-dumpster',
+                        label = locale('search_dumpster'),
+                        distance = 2,
+                        onSelect = function(data) return Inventory.OpenDumpster(data.entity) end,
+                    },
+                },
+            })
+        end)
+
+        pcall(function()
+            exports.ghst_interact:create({
+                id = 'ox_inventory:trunk',
+                --- `addGlobalVehicle` -> `class = 'vehicle'`, per the ladder table in
+                --- `ghst_interact`'s README: a car is not a region you stand in or a fixed prop,
+                --- it is a thing that moves and can be anywhere.
+                class = 'vehicle',
+                --- The boot lid bone, present on the overwhelming majority of the fleet.
+                --- `CanAccessTrunk` below still does the real per-vehicle door/lock/class check --
+                --- this only says where the prompt sits. **Unmeasured across the fleet as a
+                --- whole** -- `/ibuild` catches a model where it lands wrong.
+                bones = { 'boot', 'platelight' },
+                options = {
+                    {
+                        icon = 'fas fa-truck-ramp-box',
+                        label = locale('open_label', locale('storage')),
+                        distance = 1.5,
+                        canInteract = Inventory.CanAccessTrunk,
+                        onSelect = function(data)
+                            return Inventory.OpenTrunk(data.entity)
+                        end,
+                    },
+                },
+            })
+        end)
+    end
+
+    addInteract()
+
+    --- Evidence lockers and stashes are box zones registered through `Utils.CreateBoxZone`
+    --- further down this file, and that registry is `ghst_interact`'s own -- a restart empties
+    --- it the same way it empties the model/entity registrations above. Rebuilding through the
+    --- module's own `__call` rather than a narrower re-add keeps one path idempotent instead of
+    --- two things that can drift apart, the same argument `Shops.refreshShops` makes.
+    AddEventHandler('onResourceStart', function(resource)
+        if resource ~= 'ghst_interact' then return end
+
+        addInteract()
+        Inventory.Evidence()
+        Inventory.Stashes()
+    end)
 end
 
 ---@param search 'slots' | 1 | 'count' | 2
@@ -339,33 +393,46 @@ local function openEvidence()
     client.openInventory('policeevidence')
 end
 
+--- **The message is a function, and that is the point.** This table is built when the file loads,
+--- so a key resolved here is the key as it was at resource start -- and it would then name that
+--- key for the rest of the session, through any rebind and through the player picking up a pad.
+--- `Utils.nearbyMarker` calls whatever it finds here, so the key is resolved at the moment the
+--- prompt is drawn instead.
 local textPrompts = {
     evidence = {
         options = { icon = 'fa-box-archive' },
-        message = ('**%s**  \n%s'):format(locale('open_police_evidence'),
-            locale('interact_prompt', GetControlInstructionalButton(0, 38, true):sub(3)))
+        message = function()
+            return ('**%s**  \n%s'):format(locale('open_police_evidence'), Utils.interactPrompt())
+        end
     },
     stash = {
         options = { icon = 'fa-warehouse' },
-        message = ('**%s**  \n%s'):format(locale('open_stash'),
-            locale('interact_prompt', GetControlInstructionalButton(0, 38, true):sub(3)))
+        message = function()
+            return ('**%s**  \n%s'):format(locale('open_stash'), Utils.interactPrompt())
+        end
     }
 }
 
+--- **Both `Inventory.Evidence` and `Inventory.Stashes` below register through
+--- `Utils.CreateBoxZone`.** Each is a box zone -- a rotated cuboid with width/length/height -- and
+--- as of 2026-09-05 `ghst_interact` has a volume form for exactly that: a `coords` place carrying
+--- `size`/`rotation`. The ANCHOR it draws the prompt at is the box's own centre, computed by
+--- `Utils.CreateBoxZone` from the legacy `loc`/`minZ`/`maxZ` spelling this data still uses -- see
+--- that function for why that point rather than a guess.
 Inventory.Evidence = setmetatable(lib.load('data.evidence'), {
     __call = function(self)
-        for _, evidence in pairs(self) do
+        for index, evidence in pairs(self) do
             if evidence.point then
                 evidence.point:remove()
             elseif evidence.zoneId then
-                exports.ox_target:removeZone(evidence.zoneId)
+                Utils.RemoveBoxZone(evidence.zoneId)
                 evidence.zoneId = nil
             end
 
             if client.hasGroup(shared.police) then
-                if shared.target then
+                if shared.interact then
                     if evidence.target then
-                        evidence.zoneId = Utils.CreateBoxZone(evidence.target, {
+                        evidence.zoneId = Utils.CreateBoxZone(('ox_inventory:evidence:%s'):format(index), evidence.target, {
                             {
                                 icon = evidence.target.icon or 'fas fa-warehouse',
                                 label = locale('open_police_evidence'),
@@ -399,14 +466,14 @@ Inventory.Stashes = setmetatable(lib.load('data.stashes'), {
             if stash.point then
                 stash.point:remove()
             elseif stash.zoneId then
-                exports.ox_target:removeZone(stash.zoneId)
+                Utils.RemoveBoxZone(stash.zoneId)
                 stash.zoneId = nil
             end
 
             if not stash.groups or client.hasGroup(stash.groups) then
-                if shared.target then
+                if shared.interact then
                     if stash.target then
-                        stash.zoneId = Utils.CreateBoxZone(stash.target, {
+                        stash.zoneId = Utils.CreateBoxZone(('ox_inventory:stash:%s'):format(id), stash.target, {
                             {
                                 icon = stash.target.icon or 'fas fa-warehouse',
                                 label = stash.target.label or locale('open_stash'),

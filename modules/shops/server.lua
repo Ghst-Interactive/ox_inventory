@@ -4,7 +4,7 @@ local Items = require 'modules.items.server'
 local Inventory = require 'modules.inventory.server'
 local TriggerEventHooks = require 'modules.hooks.server'
 local Shops = {}
-local locations = shared.target and 'targets' or 'locations'
+local locations = shared.interact and 'targets' or 'locations'
 
 ---@class OxShopItem
 ---@field slot number
@@ -81,7 +81,7 @@ local function createShop(shopType, id)
 	local groups = shop.groups or shop.jobs
     local coords
 
-    if shared.target then
+    if shared.interact then
         if store.length then
             local z = store.loc.z + math.abs(store.minZ - store.maxZ) / 2
             coords = vec3(store.loc.x, store.loc.y, z)
@@ -100,7 +100,7 @@ local function createShop(shopType, id)
 		slots = #shop.inventory,
 		type = 'shop',
 		coords = coords,
-		distance = shared.target and shop.targets?[id]?.distance,
+		distance = shared.interact and shop.targets?[id]?.distance,
 	}
 
 	setupShopItems(id, shopType, shop.name, groups)

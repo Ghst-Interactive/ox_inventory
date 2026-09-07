@@ -30,6 +30,7 @@
     width: var(--slot-size);
     height: var(--slot-size);
     background-color: var(--surface-raised);
+    text-shadow: none;
     background-size: 70%;
     background-position: center;
     background-repeat: no-repeat;
