@@ -6,10 +6,14 @@
   import { items as itemDefs, locale } from '../lib/state.svelte';
   import { InventoryType, type Inventory, type Slot } from '../typings';
   import { tidy } from '../lib/tidy';
+  import EmptyState from '../lib/EmptyState.svelte';
+  import Field from '../lib/Field.svelte';
   import Icon from '../lib/Icon.svelte';
+  import Panel from '../lib/Panel.svelte';
+  import Bar from '../lib/Bar.svelte';
+  import Button from '../lib/Button.svelte';
   import { ArrowDownAZ, Backpack, Search, X } from '../lib/icons';
   import InventorySlot from './InventorySlot.svelte';
-  import WeightBar from './WeightBar.svelte';
 
   let {
     inventory,
@@ -276,81 +280,75 @@
   const format = (grams: number) => (grams / 1000).toLocaleString('en-us', { maximumFractionDigits: 2 });
 </script>
 
-<section class="pane">
-  <header>
-    <p class="title">{inventory.label ?? ''}</p>
-
-    <!-- One box for every header button, rather than an auto margin on each: two buttons
-         each pushing themselves right would split the free space between them instead of
-         sitting together. -->
-    <div class="tools">
-      <!-- Offered whenever the player is carrying a bag, with no second condition: a bag has
-           one place it can be now, so the button that puts it there can never be a no-op.
-           It used to be hidden while the bag was the right-hand pane — the one state where
-           the bag was in the wrong place and the button was the way out of it. -->
-      {#if bagSlot}
-        <button
-          class="tool"
-          class:on={bagOpen}
-          onclick={toggleBag}
-          aria-pressed={bagOpen}
-          title={bagLabel}
-          aria-label={bagLabel || locale.ui_backpack || 'Backpack'}
-        >
-          <Icon node={Backpack} size="14px" />
-        </button>
-      {/if}
-
-      {#if container}
-        <button
-          class="tool dismiss"
-          onclick={() => fetchNui('closeContainer')}
-          aria-label={locale.ui_close || 'Close'}
-        >
-          <Icon node={X} size="14px" />
-        </button>
-      {/if}
-
-      {#if tidyable}
-        <button
-          class="tool"
-          onclick={runTidy}
-          disabled={tidying || inv.isBusy}
-          title={locale.ui_tidy_hint || 'Stack and sort. Slots 1-5 stay where they are.'}
-          aria-label={locale.ui_tidy || 'Tidy'}
-        >
-          <Icon node={ArrowDownAZ} size="14px" />
-        </button>
-      {/if}
-    </div>
-
-    {#if inventory.maxWeight}
-      <p class="weight" class:heavy={strain === 'heavy'} class:over={strain === 'over'}>
-        {#if strainLabel}<span class="strain">{strainLabel}</span>{/if}
-        {format(weight)} / {format(inventory.maxWeight)} kg
-      </p>
+<div class="w-bag">
+<Panel title={inventory.label ?? ''} scroll={false}>
+  {#snippet actions()}
+    <!-- One row of icon-only ghost buttons, pinned right by Panel's own header layout —
+         no more hand-rolled auto-margin box for them to share. -->
+    {#if bagSlot}
+      <Button
+        variant="ghost"
+        selected={bagOpen}
+        onclick={toggleBag}
+        label={bagLabel || locale.ui_backpack || 'Backpack'}
+      >
+        <Icon node={Backpack} size="14px" />
+      </Button>
     {/if}
-  </header>
 
+    {#if container}
+      <Button variant="ghost" onclick={() => fetchNui('closeContainer')} label={locale.ui_close || 'Close'}>
+        <Icon node={X} size="14px" />
+      </Button>
+    {/if}
+
+    {#if tidyable}
+      <Button
+        variant="ghost"
+        onclick={runTidy}
+        disabled={tidying || inv.isBusy}
+        label={locale.ui_tidy || 'Tidy'}
+      >
+        <Icon node={ArrowDownAZ} size="14px" />
+      </Button>
+    {/if}
+  {/snippet}
+
+  <div class="body-stack">
   {#if inventory.maxWeight}
-    <WeightBar percent={(weight / inventory.maxWeight) * 100} />
+    <!-- The carry figure lives IN THE BAG'S OWN HEAD now, as a kit `Bar` with its readout —
+         not a corner plate hovering outside the panel. `strainLabel` folds into the same
+         readout string rather than a second line, so a heavy or overloaded bag still says
+         so in the one place a player is already looking. -->
+    <Bar
+      value={load / 100}
+      tone={strain === 'over' ? 'danger' : strain === 'heavy' ? 'warn' : 'primary'}
+      label={locale.ui_carrying || 'Carrying'}
+      readout={`${strainLabel ? strainLabel + ' · ' : ''}${format(weight)} / ${format(inventory.maxWeight)} kg`}
+    />
   {/if}
 
   {#if searchable}
-    <div class="search" class:active={!!needle}>
-      <Icon node={Search} size="13px" />
-      <input
-        type="text"
-        bind:value={query}
-        placeholder={locale.ui_search || 'Search'}
-        aria-label={locale.ui_search || 'Search'}
-      />
-      {#if needle}
-        <button class="clear" onclick={() => (query = '')} aria-label={locale.ui_close || 'Close'}>
-          <Icon node={X} size="11px" />
-        </button>
-      {/if}
-    </div>
+    <!--
+      `Field`, and this file is one of three that wrote it. `ghst_emotes`' animation menu and
+      `ghst_appearance`'s pack picker had the same box -- a glyph, a bare input, a 2px left border
+      reserved as transparent at rest, and a focus state that is a `--primary-glow` wash plus a
+      `--color-primary` rail down that reserved edge. Three authors reading ox_lib's `InputRow` and
+      none of them able to import it.
+
+      **The third state came from here and goes out to the other two.** A field holding a query
+      while the caret is elsewhere kept the accent on the frame and the glyph and dropped the wash,
+      so a player reading a filtered grid can see *why* it is short. It is derived from the value
+      in the component rather than passed, which is what retires the `class:active` this had.
+    -->
+    <Field
+      bind:value={query}
+      label={locale.ui_search || 'Search'}
+      placeholder={locale.ui_search || 'Search'}
+    >
+      {#snippet glyph()}<Icon node={Search} size="13px" />{/snippet}
+      {#snippet clearGlyph()}<Icon node={X} size="11px" />{/snippet}
+    </Field>
   {/if}
 
   {#if chipped}
@@ -373,7 +371,7 @@
        visible half of that — `stalled` adds the part the player can actually see, but
        only once a round-trip is slow enough to be worth mentioning. -->
   <div
-    class="grid slot-grid"
+    class="slots slot-grid"
     class:stalled={stalled || tidying}
     style:--grid-rows={gridRows}
     style:pointer-events={inv.isBusy || tidying ? 'none' : 'auto'}
@@ -395,120 +393,39 @@
          nothing, a search that found nothing, and a pane that failed to load look
          identical without this. -->
     {#if !filled}
-      <p class="empty">{emptyLabel}</p>
+      <div class="nothing"><EmptyState message={emptyLabel} /></div>
     {:else if filtering && hits === 0}
-      <p class="empty">{locale.ui_no_results || 'Nothing matches'}</p>
+      <div class="nothing">
+        <EmptyState message={locale.ui_no_results || 'Nothing matches'} />
+      </div>
     {/if}
   </div>
-</section>
+  </div>
+</Panel>
+</div>
 
 <style>
-  .pane {
+  .w-bag {
+    display: flex;
+    min-height: 0;
+    max-height: 100%;
+    width: var(--pane-width);
+  }
+
+  /* Same padding as Panel's own head (--space-4), not the old bespoke --pane-pad -- so the
+     body's left/right inset lines up with the title above it, and app.css's --slot-base
+     divides the same constant back out of --pane-width. */
+  .body-stack {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    /*
-     * Everything the pane has to fit, spelled out. Preflight makes this border-box, so
-     * the width covers the panel's own padding and its 1px border as well as the
-     * columns, the gaps and the scrollbar. Being a couple of pixels short is enough to
-     * put a horizontal scrollbar under the grid; being generous is enough to make the
-     * panel visibly lopsided. Both happened, hence the measured --grid-scrollbar.
-     */
-    width: calc(
-      var(--slot-size) * var(--grid-cols) + var(--slot-gap) * (var(--grid-cols) - 1) +
-        var(--pane-pad) * 2 + 2px
-    );
-    padding: var(--pane-pad);
-    background: var(--surface-panel);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    box-shadow: inset 0 1px 0 var(--edge-highlight), var(--shadow-panel);
-  }
-
-  header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-3);
-  }
-
-  .title {
-    font-size: var(--text-label);
-    letter-spacing: var(--tracking-label);
-    text-transform: uppercase;
-    color: var(--color-gray);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .tools {
-    flex: none;
-    display: flex;
-    align-self: center;
-    align-items: center;
-    gap: var(--space-0-5);
-    margin-left: auto;
-  }
-
-  .tool {
-    flex: none;
-    display: flex;
-    padding: var(--space-0-5);
-    border-radius: var(--radius-sm);
-    color: var(--color-dim);
-    transition: color var(--dur-fast) var(--ease-out);
-  }
-
-  .tool:hover:not(:disabled) {
-    color: var(--color-primary);
-  }
-
-  .tool:disabled {
-    opacity: 0.4;
-  }
-
-  /* The bag button is a toggle, so it says which way it is set rather than only reacting
-     to the cursor. */
-  .tool.on {
-    color: var(--color-primary);
-  }
-
-  /* Same shape as the buttons beside it, but this one shuts the pane rather than
-     rearranging it, so it takes the danger colour on hover instead of the accent. */
-  .dismiss:hover:not(:disabled) {
-    color: var(--color-danger);
-  }
-
-  .weight {
-    flex: none;
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-1-5);
-    font-size: var(--text-meta);
-    color: var(--color-dim);
-    transition: color var(--dur-base) var(--ease-out);
-  }
-
-  .weight.heavy {
-    color: var(--color-warn);
-  }
-
-  .weight.over {
-    color: var(--color-danger-text);
-  }
-
-  /* The word carries the weight — literally the point of it — so it is the emphasised
-     half and the numbers stay quiet behind it. */
-  .strain {
-    letter-spacing: var(--tracking-label);
-    text-transform: uppercase;
-    font-weight: var(--font-weight-semibold);
+    min-height: 0;
+    padding: var(--space-4);
   }
 
   /* Height comes from .slot-grid in app.css: a fixed five rows, so both panes match
      whatever they hold. grid-auto-rows keeps a partly-filled last row square. */
-  .grid {
+  .slots {
     display: grid;
     grid-template-columns: repeat(var(--grid-cols), var(--slot-size));
     grid-auto-rows: var(--slot-size);
@@ -545,48 +462,11 @@
 
   /* ---- Search ------------------------------------------------------------ */
 
-  .search {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-1-5) var(--space-2);
-    background: var(--tint-sunken);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    color: var(--color-dim);
-    transition:
-      border-color var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out);
-  }
-
-  .search:focus-within,
-  .search.active {
-    border-color: var(--primary-glow-border);
-    color: var(--color-primary);
-  }
-
-  .search input {
-    flex: 1;
-    min-width: 0;
-    background: none;
-    border: none;
-    outline: none;
-    color: var(--color-white);
-    font-family: inherit;
-    font-size: var(--text-sm);
-  }
-
-  .search .clear {
-    flex: none;
-    display: flex;
-    padding: var(--space-0-5);
-    border-radius: var(--radius-full);
-    color: var(--color-dim);
-  }
-
-  .search .clear:hover {
-    color: var(--color-white);
-  }
+  /*
+   * `.search` and its five rules -- the frame, the reserved left rail, `:focus-within`, `.active`
+   * and the clear button -- are `Field`. The third state this file invented went into the
+   * component and out to the other two resources that draw a filter box.
+   */
 
   /* ---- Category chips ---------------------------------------------------- */
 
@@ -607,6 +487,7 @@
     color: var(--color-dim);
     font-size: var(--text-meta);
     letter-spacing: var(--tracking-label);
+    font-family: var(--font-display);
     text-transform: uppercase;
     transition:
       background var(--dur-fast) var(--ease-out),
@@ -619,10 +500,19 @@
     color: var(--color-white);
   }
 
+  /*
+   * A CHIP KEEPS ITS FILL AND ITS FOUR-SIDED EDGE, and takes the tree's one selected wash.
+   *
+   * The rail rows and fields take is refused here for `ghst_chat`'s `Segmented.svelte` reason: a
+   * rail needs an edge long enough to read, and a fully rounded chip two lines of small type tall
+   * has none. What changes is the token -- `--layer-selected` is the accent at 14%, a second
+   * answer to "this one is chosen" at a different alpha from the `--primary-glow` a menu row and
+   * a focused field both take. The stacked-layer form goes with it: replacing the chip's own
+   * `--tint-sunken` with the wash is what `InputRow`'s `.control:focus` does, and it needs no
+   * gradient to composite two colours on one box.
+   */
   .chip.on {
-    /* Tinted over the sunken surface rather than painted onto it, per tokens.css. */
-    background-color: var(--tint-sunken);
-    background-image: var(--layer-selected);
+    background: var(--primary-glow);
     border-color: var(--color-primary);
     color: var(--color-primary);
   }
@@ -639,19 +529,13 @@
 
   /* ---- Empty and stalled ------------------------------------------------- */
 
-  .empty {
+  /* `.empty` is `EmptyState`, `text-wrap: balance` and all -- see that component, which is where
+     the balance belongs: a centred sentence with one word on the second line is the failure it
+     prevents, and a centred sentence is what it is. What is left here is the grid placement, which
+     is this pane's business and not a component's. */
+  .nothing {
     grid-column: 1 / -1;
     align-self: center;
-    margin: 0;
-    padding: var(--space-6) var(--space-2);
-    text-align: center;
-    font-size: var(--text-sm);
-    color: var(--color-dim);
-    /* Chromium 114, above the NUI ceiling, and left in deliberately: unread, the line wraps the
-       ordinary way. It is the only above-ceiling declaration in any of these bundles that is not
-       paired with a fallback, because it is the only one whose absence costs nothing. See
-       `theme/base.css`. */
-    text-wrap: balance;
   }
 
   /* Deliberately understated: a move that takes a moment is not an error, and the grid
