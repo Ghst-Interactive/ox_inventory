@@ -15,7 +15,8 @@
    * of its own with a hand-rolled header and a list whose rows committed on click. The walk's row
    * for this resource settled it as one centred kit `Panel` per verb, so the frame is one file and
    * what differs is the eyebrow, the blurb, the body above the count and the payload the confirm
-   * button sends. See `Tools/ghst_template/web/src/dev/mockups/screens/Inventory.svelte`, `modals`.
+   * button sends. The design gallery drew the three in `screens/Inventory.svelte`, `modals` --
+   * deleted 2026-09-08, `ghst_template` `dcebad1`.
    *
    * ## Why it is centred rather than at the pointer
    *

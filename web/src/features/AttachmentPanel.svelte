@@ -15,8 +15,9 @@
    * WEAPON ATTACHMENTS, as a screen with the live model on it.
    *
    * `docs/ui-tdu.md` §8's row for this resource: *"weapon attachments as a screen with the LIVE
-   * weapon model orbited like the ped and its points projected on"*. The gallery draws it in
-   * `Tools/ghst_template/web/src/dev/mockups/screens/Inventory.svelte`, view `attachments`.
+   * weapon model orbited like the ped and its points projected on"*. The design gallery drew it
+   * in `screens/Inventory.svelte`, view `attachments` -- deleted 2026-09-08, `ghst_template`
+   * `dcebad1`.
    *
    * What this replaced was a 340px card listing what happened to be fitted, each with an ×. It
    * could take a part off and it could not put one on, so fitting a suppressor meant closing the
