@@ -18,10 +18,12 @@
     closeContextMenu,
     closeGivePicker,
     closeCountPrompt,
+    closePanels,
     closeTooltip,
     closeWeaponPanel,
     countPrompt,
     givePicker,
+    panels,
     ui,
     weaponPanel,
   } from '../lib/ui.svelte';
@@ -94,6 +96,10 @@
     closeCountPrompt();
     closeWeaponPanel();
     closeGivePicker();
+
+    // The controls sheet and the settings, which used to be `InventoryGrid`'s own state and so
+    // outlived the window that raised them — reopening the bag found one still up.
+    closePanels();
   }
 
   const offClose = onNuiEvent('closeInventory', () => {
@@ -156,14 +162,34 @@
   );
 
   /**
-   * Escape closes the inventory. Handled on keyup rather than keydown to match the
-   * original — and it must tell Lua, or the game keeps NUI focus and the player is
-   * stuck looking at a closed inventory they cannot dismiss.
+   * ONE ESCAPE, ONE THING.
+   *
+   * Every dialog in this resource takes Escape on **keydown** and this window takes it on
+   * **keyup**, so a single press did both: the attachments screen closed, and a few milliseconds
+   * later the window it had just returned to closed underneath it. `stopPropagation` in the dialog
+   * cannot reach that — it is a different event — and the dialogs' own comments claiming "this is
+   * on top, so it wins" were true only of the keydown half.
+   *
+   * It was worse than a stray close. The attachments screen borrows the screen blur while it is
+   * up, so the two closes racing left a `TriggerScreenblurFadeIn` and a `TriggerScreenblurFadeOut`
+   * on the same frame, and the blur stayed on an empty screen for the rest of the session.
+   *
+   * So the press is latched where the ambiguity is, rather than in each of the four dialogs: if a
+   * dialog was up when the key went **down**, the matching **up** is spent. `dialogUp` is read at
+   * keydown, which is before any dialog has had a chance to close — this handler is the parent's
+   * and Svelte attaches it first.
    */
+  let escapeSpent = false;
+
   function onKeyUp(event: KeyboardEvent) {
     if (event.key === 'Shift') inv.shiftPressed = false;
 
     if (event.code !== 'Escape') return;
+
+    if (escapeSpent) {
+      escapeSpent = false;
+      return;
+    }
 
     ui.inventoryOpen = false;
     dismissAll();
@@ -186,6 +212,37 @@
   };
 
   /**
+   * Telling Lua that a field has the keyboard, so the game can stop reading it.
+   *
+   * `client.lua`'s `setTyping` is the other half and carries the reasoning: the window keeps the
+   * game reading input the whole time it is open, so without this a `w` in the search box is also
+   * a step forward, and an `m` is the phone opening on top of the inventory. The second one is not
+   * something NUI focus can fix -- the engine dispatches a keybind whoever owns the keyboard --
+   * which is why the answer has to be *declared* from here.
+   *
+   * **One pair of window listeners, not a flag on every field.** `focusin` and `focusout` bubble
+   * to the window, so this covers the pane search, the count prompt and the give picker's amount
+   * box without any of them knowing about it -- and covers whatever gets added next.
+   *
+   * **The way out is read a task later.** `focusout` fires *before* the next element takes focus,
+   * so reading the active element during it reports "nobody is typing" for every Tab or click
+   * between two fields -- and each of those false clears hands the game a frame of keyboard input
+   * in the middle of a sentence. Deferring lets focus land first; a real blur still resolves to
+   * nothing focused.
+   *
+   * Sent on every change rather than only on transitions, deliberately: this page cannot know when
+   * Lua last cleared the hold on its own, and closing the window with the caret in the search box
+   * is exactly that -- an element that is removed fires no blur, so Lua clears and the page never
+   * hears. A mirror kept here would be stale from that moment on, and every keystroke after it a
+   * hold nobody is told about. `setTyping` de-duplicates, because it is the side that also clears.
+   */
+  function announceTyping() {
+    fetchNui('input', { typing: typing() });
+  }
+
+  const onFocusOut = () => setTimeout(announceTyping);
+
+  /**
    * Slots 1-5 are keybound out in the world, but not in here — so using a hot slot meant
    * closing the inventory first, which is the one moment you can see what is in them.
    */
@@ -204,6 +261,10 @@
   function onKeyDown(event: KeyboardEvent) {
     if (event.key === 'Shift') inv.shiftPressed = true;
 
+    // Before every early return below: whether this press belongs to a dialog is not a question
+    // about drags, typing or modifiers. See `onKeyUp`.
+    if (event.code === 'Escape' && dialogUp) escapeSpent = true;
+
     if (drag.source || typing() || event.ctrlKey || event.altKey || event.metaKey) return;
 
     // event.code, not event.key: the top-row digits report the same code on every layout,
@@ -217,11 +278,27 @@
   }
 
   /**
-   * A dialog brings its own hint plate, in the same corner, and Escape means something else
-   * while one is up. Two plates saying two things about one key is the reading the walk's
-   * "minimal, usually only esc" rule exists to prevent, so this one stands down.
+   * WHICH DIALOGS THE WINDOW HAS TO KNOW ABOUT, AND THE TWO THINGS IT USES THAT FOR.
+   *
+   * **The hint plate.** A dialog brings its own, in the same corner, and Escape means something
+   * else while one is up. Two plates saying two things about one key is the reading the walk's
+   * "minimal, usually only esc" rule exists to prevent, so this one stands down. The controls
+   * sheet and the settings bring *no* plate, and the corner going empty is still right: while
+   * either is up, Escape closes the dialog and not the window, so a plate reading "esc Close"
+   * would be describing a key it no longer owns. Both carry a close button and a scrim.
+   *
+   * **The Escape latch**, which is why this list has to be complete — see `onKeyUp`. A dialog it
+   * cannot see is a dialog whose Escape takes the inventory down with it, and that is exactly what
+   * `panels.help` and `panels.settings` did until they moved out of `InventoryGrid` and into the
+   * store on 2026-09-08.
    */
-  const dialogUp = $derived(countPrompt.open || givePicker.open || weaponPanel.slot !== null);
+  const dialogUp = $derived(
+    countPrompt.open ||
+      givePicker.open ||
+      weaponPanel.slot !== null ||
+      panels.help ||
+      panels.settings,
+  );
 
   onDestroy(() => {
     offVisible();
@@ -234,13 +311,23 @@
   });
 </script>
 
-<svelte:window onkeyup={onKeyUp} onkeydown={onKeyDown} />
+<svelte:window
+  onkeyup={onKeyUp}
+  onkeydown={onKeyDown}
+  onfocusin={announceTyping}
+  onfocusout={onFocusOut}
+/>
 
 {#if ui.inventoryOpen}
   <!-- The bag hangs under the player's own inventory rather than beside it: it is part of
        you, so it stays on your side of the control column, and stacking keeps the row to
        the two columns players already read left-to-right however many bags are open. -->
-  <div class="wrapper" class:stacked={!!inv.containerInventory} transition:fade={{ duration: 150 }}>
+  <div
+    class="wrapper"
+    class:stacked={!!inv.containerInventory}
+    class:away={weaponPanel.slot !== null}
+    transition:fade={{ duration: 150 }}
+  >
     <div class="column">
       <InventoryGrid inventory={inv.leftInventory} />
       {#if inv.containerInventory}
@@ -287,6 +374,24 @@
     left: var(--edge-x);
     bottom: var(--edge-y);
     z-index: 60;
+  }
+
+  /*
+   * THE PANES STEP ASIDE FOR THE ATTACHMENTS SCREEN.
+   *
+   * That screen is the one surface in this resource whose subject is *behind* the page — a real
+   * weapon object the client puts in the frame — and it wants the viewport, both for the room and
+   * because Lua solves the camera distance from the size of the rectangle the page leaves open.
+   * See the header of `AttachmentPanel.svelte`.
+   *
+   * Hidden rather than unmounted, and `display: none` rather than an `{#if}` around the panes for
+   * exactly that reason: the grids keep their component state, so a bag scrolled halfway down and
+   * a search box with a word in it are still that way when the player comes back from fitting a
+   * scope. `visibility` would have kept the layout, and the panes would go on claiming their
+   * clicks through a screen that is meant to be draggable everywhere.
+   */
+  .wrapper.away {
+    display: none;
   }
 
   /*

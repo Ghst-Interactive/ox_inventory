@@ -178,7 +178,23 @@
     text-shadow: none;
   }
 
-  button:hover {
+  /*
+   * **`:not(.active)`, because the active chip is white and this ink is white.**
+   *
+   * The selected chip paints `--color-white` and inks itself for that plate. This rule then took
+   * every button on hover -- including that one -- and set the ink to white as well, so pointing at
+   * the tab you are already on made its label vanish into its own chip. Silent, momentary, and
+   * invisible in a screenshot taken without a cursor in it.
+   *
+   * The hover *background* goes with it deliberately: an active chip already has a plate, and
+   * `--tint-raised` over white is a grey smear rather than feedback. The loose variant's
+   * `--layer-hover` wash below still applies, so pointing at the active chip is still acknowledged.
+   *
+   * Found 2026-09-08 in `ghst_appearance`'s frame bar, from a screenshot with the cursor resting on
+   * `FULL`. It is the third bug in this file's short history to be a rule that did not exclude the
+   * state it did not mean -- see `.seg.loose button.active` above for the first two.
+   */
+  button:hover:not(.active) {
     color: var(--color-white);
     background: var(--tint-raised);
   }

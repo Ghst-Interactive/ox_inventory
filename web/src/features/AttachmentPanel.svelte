@@ -33,10 +33,29 @@
    * numbers that comes back. Every gesture is the same shape: a drag is reported as a delta, and
    * Lua decides what a delta means, so the clamp lives in one place.
    *
-   * The mock draws the stage inside the panel's plane rather than as a true cut-out — a child
-   * cannot subtract its parent's background — so the model is read through `--surface-panel`'s
-   * translucency. That is what the gallery shows and it is the one thing here that has to be
-   * looked at in game.
+   * ## IT IS A SCREEN, NOT A DIALOG OVER THE BAG
+   *
+   * It shipped as a `wide` panel centred over the two inventory panes, and that was wrong in a way
+   * only the game showed. Three things followed from the panel:
+   *
+   *   1. **The hole was a quarter of the screen wide.** Lua solves the camera distance from the
+   *      rect it is given, so a 440px stage put the camera eleven metres off a rifle — a distant,
+   *      high, wide-angle shot with the model a thumbnail in the middle of it. The stage is now
+   *      most of the viewport and the same arithmetic answers about two metres.
+   *   2. **The model was read through the panel's own plane.** A child cannot subtract its
+   *      parent's background, so the one thing on this screen that is genuinely behind the page
+   *      was the one thing being looked at through two translucent layers and the inventory
+   *      underneath.
+   *   3. **The dots collided.** Seven labels over a 440px rectangle is a pile; over the width of
+   *      the screen they are apart.
+   *
+   * So the panes step aside — `Inventory.svelte` hides `.wrapper` while this is up, rather than
+   * unmounting it, so a bag's scroll position and search survive the trip — and what is left is
+   * the weapon over the world, an ambient plate naming it, and one rail of rows on the right.
+   *
+   * The scrim went with the panel. A click on the empty part of this screen is a *drag to orbit*,
+   * which is the one gesture the stage exists for; click-outside-to-close cannot share an element
+   * with it. Escape is the way back, and the hint plate says so.
    *
    * ## Fitting and removing use the paths that were already there
    *
@@ -54,6 +73,18 @@
   );
 
   const open = $derived(!!item?.name);
+
+  /**
+   * A slot that has stopped holding a weapon closes the screen.
+   *
+   * The screen now hides the two panes rather than sitting over them, so an item that leaves the
+   * slot underneath — dropped, taken, confiscated — used to leave a dialog with nothing in it and
+   * now leaves the player looking at an empty world with no bag and no way back but Escape.
+   * `closeWeaponPanel` clears the slot, which unhides the panes and unmounts this.
+   */
+  $effect(() => {
+    if (weaponPanel.slot !== null && !open) closeWeaponPanel();
+  });
 
   /** An attachment point on this weapon, and everything that could go on it. */
   interface Option {
@@ -84,6 +115,8 @@
   let dots = $state<Array<{ id: string; x: number; y: number; visible: boolean }>>([]);
 
   let point = $state('');
+  /** The dot under the cursor, so its name can be the one label on the stage. */
+  let hovered = $state('');
   /** The candidate the Fit button would commit. `null` is the "None" row: take off what is on. */
   let choice = $state<string | null>(null);
 
@@ -373,7 +406,7 @@
 <svelte:window {onkeydown} />
 
 {#if open && item}
-  <Shell scrim="clear" onscrim={closeWeaponPanel}>
+  <Shell place="fill">
     {#snippet hints()}
       <!-- Bottom left, ambient, white type — and it says what the gestures on the stage are,
            because a model you can orbit gives no other hint that you can. -->
@@ -391,65 +424,93 @@
       </div>
     {/snippet}
 
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!--
+      A `section` with a name, not a `role="dialog"`.
+
+      It was a dialog while it sat over the two bags. It is the page now — the bags are hidden
+      behind it — and the role brought a `tabindex="-1"` with it to satisfy
+      `a11y_interactive_supports_focus`. That tabindex is focusable by *click*, so a drag on the
+      stage made this viewport-sized element the active one, and the first alt-tab back into the
+      game put Chromium into keyboard modality and drew `base.css`'s `:focus-visible` ring — two
+      cyan pixels around the whole screen, out of nowhere, on a window nobody had tabbed to.
+    -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
+    <section
       class="screen"
-      role="dialog"
-      aria-modal="true"
-      tabindex="-1"
       aria-label={locale.ui_attachments || 'Attachments'}
-      onclick={(event) => event.stopPropagation()}
       oncontextmenu={(event) => event.preventDefault()}
     >
-      <Panel
-        eyebrow={locale.ui_weapon || 'Weapon'}
-        title={item.metadata?.label || itemDefs[item.name!]?.label || item.name!}
-        {blurb}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="stage"
+        bind:this={stageEl}
+        class:dragging
+        {onpointerdown}
+        {onpointermove}
+        {onpointerup}
+        onpointercancel={onpointerup}
+        {onwheel}
       >
-        <div class="weapon">
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="stage"
-            bind:this={stageEl}
-            class:dragging
-            {onpointerdown}
-            {onpointermove}
-            {onpointerup}
-            onpointercancel={onpointerup}
-            {onwheel}
-          >
-            {#if stage && !stage.live}
-              <!-- The fallback the plan asked for: no model, but the rows still work. -->
-              <p class="offline">{locale.ui_no_stage || 'The weapon cannot be shown here'}</p>
-            {/if}
+        <!--
+          The weapon's own name, on an ambient plate over the stage rather than in a panel header.
+          It is a caption on the thing behind it, and a header would have needed a panel around it
+          — which is the plane this screen has just got rid of.
+        -->
+        <header class="ident">
+          <p class="eyebrow">{locale.ui_weapon || 'Weapon'}</p>
+          <h1 class="name">
+            {item.metadata?.label || itemDefs[item.name!]?.label || item.name!}
+          </h1>
+          {#if blurb}<p class="blurb">{blurb}</p>{/if}
+        </header>
 
-            {#each dots as dot (dot.id)}
-              {#if dot.visible}
-                {@const fitted = !!stage?.points.find((p) => p.id === dot.id)?.fitted}
-                <button
-                  class="pt"
-                  class:on={dot.id === point}
-                  class:fitted
-                  style:left="{dot.x * 100}%"
-                  style:top="{dot.y * 100}%"
-                  onclick={() => selectPoint(dot.id)}
-                  aria-label={pointLabel(dot.id)}
-                >
-                  <span class="dot"></span>
-                  <span class="ptl">{pointLabel(dot.id)}</span>
-                </button>
+        {#if stage && !stage.live}
+          <!-- The fallback the plan asked for: no model, but the rows still work. -->
+          <p class="offline">{locale.ui_no_stage || 'The weapon cannot be shown here'}</p>
+        {/if}
+
+        <!--
+          ONE LABEL AT A TIME. Seven captions on a weapon a metre long collide — measured in game,
+          the four points that fall back to a box offset drew as a single stack of overlapping
+          plates, and even with the anchors fixed a scope and a barrel are two centimetres apart on
+          a pistol. The dot is always there; the name belongs to the point being pointed at.
+
+          The rail is where the seven live as a list, with what is on each, so nothing is hidden —
+          hovering a dot and reading a row are two ways to the same fact.
+        -->
+        {#each dots as dot (dot.id)}
+          {#if dot.visible}
+            {@const fitted = !!stage?.points.find((p) => p.id === dot.id)?.fitted}
+            <button
+              class="pt"
+              class:on={dot.id === point}
+              class:fitted
+              style:left="{dot.x * 100}%"
+              style:top="{dot.y * 100}%"
+              onclick={() => selectPoint(dot.id)}
+              onpointerenter={() => (hovered = dot.id)}
+              onpointerleave={() => hovered === dot.id && (hovered = '')}
+              aria-label={pointLabel(dot.id)}
+            >
+              <span class="dot"></span>
+              {#if dot.id === point || dot.id === hovered}
+                <span class="ptl">{pointLabel(dot.id)}</span>
               {/if}
-            {/each}
-          </div>
+            </button>
+          {/if}
+        {/each}
+      </div>
 
-          <aside class="fit">
-            {#if current}
-              <div>
-                <span class="caption">{pointLabel(current.id)}</span>
-                <h2 class="ftitle">{labelOf(current)}</h2>
-              </div>
-
+      <!-- One rail, and it is the only opaque plane on the screen. Every row the old right-hand
+           column had, in the panel the rest of this resource uses. -->
+      <aside class="rail">
+        <Panel
+          eyebrow={current ? pointLabel(current.id) : locale.ui_attachments || 'Attachments'}
+          title={current ? labelOf(current) : locale.ui_no_attachments || 'Nothing fitted'}
+          scroll
+        >
+          {#if current}
+            <div class="fit">
               <div class="well">
                 <!-- "None" is a candidate like any other, and picking it is how a part comes off:
                      one list, one Fit button, rather than a list to put on and an × to take off. -->
@@ -491,62 +552,103 @@
                   {/each}
                 </div>
               </div>
-            {:else}
-              <EmptyState message={locale.ui_no_attachments || 'Nothing fitted'} />
-            {/if}
-          </aside>
-        </div>
+            </div>
+          {:else}
+            <EmptyState message={locale.ui_no_attachments || 'Nothing fitted'} />
+          {/if}
 
-        {#snippet footer()}
-          <!-- One filled button, and it is the commit. Strip all is neutral beside it. -->
-          <div class="acts">
-            <Button disabled={!stage?.inHand || !anythingFitted} onclick={stripAll}>
-              {locale.ui_strip_all || 'Strip all'}
-            </Button>
-            <Button variant="filled" disabled={!canFit} onclick={fit}>
-              {locale.ui_fit || 'Fit'}
-            </Button>
-          </div>
-        {/snippet}
-      </Panel>
-    </div>
+          {#snippet footer()}
+            <!-- One filled button, and it is the commit. Strip all is neutral beside it. -->
+            <div class="acts">
+              <Button disabled={!stage?.inHand || !anythingFitted} onclick={stripAll}>
+                {locale.ui_strip_all || 'Strip all'}
+              </Button>
+              <Button variant="filled" disabled={!canFit} onclick={fit}>
+                {locale.ui_fit || 'Fit'}
+              </Button>
+            </div>
+          {/snippet}
+        </Panel>
+      </aside>
+    </section>
   </Shell>
 {/if}
 
 <style>
-  /* Above the two panes and the context menu that opened it. `wide` in the gallery's own
-     vocabulary: 800 at scale 1, which is the two columns plus the stage. */
+  /*
+   * The whole area Shell hands a `fill` page: the stage takes what is left after one rail.
+   *
+   * `1fr` rather than a width, because the stage's size *is* the camera's distance — Lua solves
+   * one from the other — and a fixed stage would mean re-tuning the shot for every viewport.
+   */
   .screen {
-    position: relative;
-    z-index: 90;
-    display: flex;
-    width: calc(800 * var(--ui-px));
-    max-width: 100%;
-    max-height: 100%;
-    pointer-events: auto;
-  }
-
-  .weapon {
     display: grid;
+    width: 100%;
     min-height: 0;
     gap: var(--space-5);
-    padding: var(--space-4);
-    grid-template-columns: 1fr calc(300 * var(--ui-px));
+    grid-template-columns: minmax(0, 1fr) calc(340 * var(--ui-px));
+
+    /* 0 everywhere but the harness — see app.css. The stage would otherwise start under the dev
+       drawer, and the plate naming the weapon is the first thing the drawer covers. */
+    padding-left: var(--dev-shift);
   }
 
-  /* Open to the game: nothing painted, a dashed edge to say where the model may go. The panel's
-     own plane is still behind it — see the header. */
+  /*
+   * OPEN TO THE GAME. Nothing painted at all — no border either, now that the stage is the shape
+   * of the screen rather than a rectangle inside a panel that had to say where it was.
+   *
+   * It still claims pointer events, which is what makes the empty space a place to drag.
+   */
   .stage {
     position: relative;
-    min-height: calc(320 * var(--ui-px));
-    border: 1px dashed var(--color-border);
-    border-radius: var(--radius-md);
+    min-height: 0;
     cursor: grab;
     touch-action: none;
   }
 
   .stage.dragging {
     cursor: grabbing;
+  }
+
+  /* Top left of the stage, out of the model's way. `--surface-ambient` is the plane that is
+     allowed to be read against the world; every line on it carries `--ink-scrim`, which is the
+     only reason `contrast.py` credits it. */
+  .ident {
+    position: absolute;
+    top: 0;
+    left: 0;
+    max-width: calc(360 * var(--ui-px));
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--surface-ambient);
+    /* Declared on the plate rather than on each of the three lines: `text-shadow` inherits, and
+       `glass.py` reads the rule that draws the surface. */
+    text-shadow: var(--ink-scrim);
+    /* A caption, not a control: the drag underneath it has to keep working. */
+    pointer-events: none;
+  }
+
+  .eyebrow {
+    margin: 0;
+    color: var(--color-dim);
+    font-family: var(--font-display);
+    font-size: var(--text-micro);
+    letter-spacing: var(--tracking-label);
+    text-transform: uppercase;
+  }
+
+  .name {
+    margin: 0;
+    color: var(--color-white);
+    font-family: var(--font-display);
+    font-size: var(--text-display);
+    font-weight: var(--font-weight-extrabold);
+  }
+
+  .blurb {
+    margin: 0;
+    color: var(--color-gray);
+    font-size: var(--text-meta);
   }
 
   .offline {
@@ -558,13 +660,25 @@
     color: var(--color-dim);
     font-size: var(--text-meta);
     text-align: center;
+    text-shadow: var(--ink-scrim);
   }
 
+  /*
+   * A fixed square centred on the anchor, with the dot in the middle of it.
+   *
+   * The label used to be a flex sibling, which made the button as wide as the caption — and
+   * `translate(-50%)` then centred *that* on the anchor, so the dot sat half a word to the left of
+   * the thing it was marking, by a distance that depended on how long the word was. A label that
+   * comes and goes on hover would have made the dot jump as well. So the label is taken out of the
+   * flow and the square is the hit area: 28px around a 12px dot, which is a target a player can
+   * hit on a moving model.
+   */
   .pt {
     position: absolute;
-    display: flex;
-    align-items: center;
-    gap: var(--space-1-5);
+    display: grid;
+    width: calc(28 * var(--ui-px));
+    height: calc(28 * var(--ui-px));
+    place-items: center;
     transform: translate(-50%, -50%);
   }
 
@@ -589,7 +703,10 @@
   }
 
   .ptl {
+    position: absolute;
+    left: 100%;
     padding: var(--space-0-5) var(--space-1-5);
+    white-space: nowrap;
     border-radius: var(--radius-xs);
     background: var(--surface-ambient);
     /* An ambient plate is read against the game, not against the panel — the label sits over the
@@ -605,12 +722,20 @@
     color: var(--color-primary);
   }
 
-  .fit {
+  /* A column, so the panel inside is a flex item that SHRINKS: it hugs its rows while they fit and
+     is bounded by the rail once they do not, which is what hands `Panel`'s own `scroll` body
+     something to scroll inside. Without the `min-height: 0` the floor is `auto` and the panel
+     simply grows off the bottom of the screen, footer and all. */
+  .rail {
     display: flex;
     min-height: 0;
     flex-direction: column;
+  }
+
+  .fit {
+    display: flex;
+    flex-direction: column;
     gap: var(--space-3);
-    overflow-y: auto;
   }
 
   .tight {
@@ -624,20 +749,24 @@
     flex-direction: column;
   }
 
+  /* Aligned to the rows it heads. A caption that does not start where its rows start reads as a
+     stray line rather than as their heading, and this one was flush against the panel's inner edge
+     while every row below it was inset.
+
+     It takes `Row`'s whole leading box rather than adding its width up: `--row-pad-x`, and the
+     transparent `border-left` every row carries so the selected one can turn it into an accent
+     bar. Written as a border rather than as `calc(... + 2px)` because that is what it is on a row,
+     and because a raw pixel in a padding is a spacing value off the scale -- `check-tokens.mjs`
+     says so and is right to. Without the border the caption lands two pixels proud of the labels,
+     which is the kind of almost-aligned that reads as a mistake rather than as a choice. */
   .caption {
+    padding: 0 var(--row-pad-x);
+    border-left: 2px solid transparent;
     font-family: var(--font-display);
     font-size: var(--text-meta);
     letter-spacing: var(--tracking-label);
     text-transform: uppercase;
     color: var(--color-dim);
-  }
-
-  .ftitle {
-    margin: 0;
-    color: var(--color-white);
-    font-family: var(--font-display);
-    font-size: var(--text-heading);
-    font-weight: var(--font-weight-extrabold);
   }
 
   .acts {

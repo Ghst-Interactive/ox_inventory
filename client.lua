@@ -8,8 +8,9 @@ require 'modules.prefs.client'
 local Utils = require 'modules.utils.client'
 local Weapon = require 'modules.weapon.client'
 -- The attachments screen's model, camera and projected points. It reads `PlayerData` and the
--- `getCurrentWeapon` export below, and owns its own NUI callbacks, so nothing here calls into it.
-require 'modules.weaponstage.client'
+-- `getCurrentWeapon` export below and owns its own NUI callbacks, so the only thing reached from
+-- here is `stop` on the close path -- see the note beside it, and `closeInventory` below.
+local Stage = require 'modules.weaponstage.client'
 local currentWeapon
 
 exports('getCurrentWeapon', function()
@@ -47,15 +48,38 @@ client.player:set('invBusy', true)
 client.player:set('invHotkeys', false)
 client.player:set('canUseWeapons', false)
 
-local function canOpenInventory()
+--- @param ignoreBusy boolean? see the note on the `invBusy` clause
+local function canOpenInventory(ignoreBusy)
     if not PlayerData.loaded then
         return shared.info('cannot open inventory', '(player inventory has not loaded)')
     end
 
     if IsPauseMenuActive() or invOpen == nil then return end
 
-    if invBusy or (currentWeapon?.timer or 0) > 0 then
+    --[[
+        A BUSY PLAYER IS NOT LOOKING AT AN INVENTORY -- EXCEPT ON THE ATTACHMENTS SCREEN.
+
+        `lib.progressBar` sets `LocalPlayer.state.invBusy` for its whole duration, this file
+        mirrors it into the local through a statebag handler, and the open-inventory watchdog
+        closes the window on it. That is right for every ordinary item: you use a bandage from the
+        bag, the bag closes and you watch the animation.
+
+        The attachments screen is the case it is wrong for, and it made fitting a part look broken.
+        Components carry a `usetime` -- 2500ms on most of them -- so *fitting a scope raised
+        `invBusy` and the watchdog shut the screen a tenth of a second later*, before the part was
+        even on the gun. The player pressed Fit and was returned to the world.
+
+        `ignoreBusy` is passed only by that watchdog, and only while the screen is up. Every other
+        reason still closes it -- death, cuffs, the pause menu, walking away from a stash -- and
+        the weapon timer below is deliberately left out of the exemption: that one moves when the
+        player equips something, which is a real reason to leave.
+    ]]
+    if invBusy and not ignoreBusy then
         return shared.info('cannot open inventory', '(is busy)')
+    end
+
+    if (currentWeapon?.timer or 0) > 0 then
+        return shared.info('cannot open inventory', '(weapon is busy)')
     end
 
     if PlayerData.dead or IsPedFatallyInjured(playerPed) then
@@ -1004,6 +1028,43 @@ local function registerCommands()
 	registerCommands = nil
 end
 
+--- --- A TEXT FIELD HAS THE KEYBOARD ---
+---
+--- The page saying a field on it has taken typed characters, or given them back. Two things come
+--- off together and they are not the same thing:
+---
+---   * **keep-input**, so a `w` typed into the pane search is not also a step forward. This window
+---     keeps the game reading input for as long as it is up -- that is what lets a player walk
+---     with the inventory open -- and the cost of "both" is a search box that drives the ped.
+---   * **the `lib.setTextInput` hold**, so an `m` is not also the phone opening on top of the
+---     inventory. That is every *guarded* keybind on the client, which is a different set and a
+---     bigger one: a keybind is dispatched by the engine no matter who owns the keyboard, so NUI
+---     focus cannot stop one and only the declared hold can.
+---
+--- **Declared rather than detected**, for the reason `lib.setTextInput`'s own header gives at
+--- length: no native answers "is anything on screen taking typed characters", and the one that
+--- looks like it -- `IsNuiFocusKeepingInput()` -- is per-resource and always answers false to the
+--- resource doing the reading. So the page is the only thing that knows, and it says so.
+--- `web/src/features/Inventory.svelte` is the other half of this.
+---
+--- Untagged, because this is one page: the pane search, the count prompt and the give picker's
+--- amount box are fields on the same window and the page sends one signal covering all of them.
+local typing = false
+
+---@param state boolean
+local function setTyping(state)
+	if state == typing then return end
+
+	typing = state
+
+	--- Only while this resource actually has the screen. `SetNuiFocusKeepInput` is one global
+	--- flag, so a closed inventory re-asserting it would be writing on behalf of whoever holds
+	--- focus now -- the trap `nui-focus-is-borrowed` is about.
+	if invOpen and IsNuiFocused() then SetNuiFocusKeepInput(not state) end
+
+	lib.setTextInput(state)
+end
+
 function client.closeInventory()
 	if not client.interval then return end
 
@@ -1011,6 +1072,27 @@ function client.closeInventory()
 		invOpen = nil
 		SetNuiFocus(false, false)
 		SetNuiFocusKeepInput(false)
+
+		--- **The page cannot be the one to release this.** Chromium fires no blur for an element
+		--- that is removed, so a window closed with the caret in the search box sends nothing on
+		--- its way out -- and the hold left behind is every guarded keybind on the client held
+		--- down by an inventory that is not on screen. `invOpen` is nil by now, so this drops the
+		--- hold and nothing else; the focus natives have just been cleared by hand.
+		setTyping(false)
+
+		--- **Escape closes this window and pauses the game, and only one of those was asked for.**
+		--- Every control is disabled while the inventory is up, so the key costs nothing until this
+		--- runs -- and then focus is back, the key is still down, and the game reads it. `ghst_prefs`
+		--- holds the two frontend controls shut for the handover; `client/focus.lua` there is the
+		--- account. pcall'd because that resource is a soft dependency, exactly as `modules/prefs`
+		--- treats it.
+		pcall(function() exports.ghst_prefs:swallowPause() end)
+
+		--- **Before the blur, and told that the window is going with it.** The attachments screen
+		--- borrows the blur while it is up; if it hands it back on its own the fade in crosses the
+		--- fade out below and the blur stays on the screen. `true` makes it drop the borrow
+		--- instead, and the count still balances. See `modules/weaponstage`'s `Stage.stop`.
+		Stage.stop(true)
 		Utils.blurOut()
 		Utils.previewOut()
 		-- Server-side release happens in OxInventory:closeInventory; this is the local half.
@@ -1532,7 +1614,7 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 			end
 
 		elseif invOpen == true then
-			if not canOpenInventory() then
+			if not canOpenInventory(Stage.isOpen()) then
 				client.closeInventory()
 			else
 				playerCoords = GetEntityCoords(playerPed)
@@ -1982,6 +2064,16 @@ end)
 
 RegisterNUICallback('exit', function(_, cb)
 	client.closeInventory()
+	cb(1)
+end)
+
+--- The page's half of the signal above. It is sent on every focus change rather than only on
+--- transitions, because the page has no way to know when this side last cleared the hold by
+--- itself -- a mirror of the state kept over there goes stale the first time a window closes with
+--- a field focused, and every keystroke after that is a hold nobody hears about. `setTyping` is
+--- where the de-duplication belongs, because it is the side that also clears.
+RegisterNUICallback('input', function(data, cb)
+	setTyping(type(data) == 'table' and data.typing == true)
 	cb(1)
 end)
 

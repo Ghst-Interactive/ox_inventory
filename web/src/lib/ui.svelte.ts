@@ -191,6 +191,28 @@ export const selection = $state<{ inventory: string | null; slot: number | null 
   slot: null,
 });
 
+/**
+ * The two reference panels the player's own pane can raise: the controls sheet and the settings.
+ *
+ * **Held here for the same reason `weaponPanel` is: something outside them has to know one is up.**
+ * They were two `$state` booleans inside `InventoryGrid`, bound down into the components, and that
+ * was defensible while the only thing that cared was the pane that owned them. It stopped being
+ * true when `Inventory.svelte` learned to latch Escape — every dialog in this resource takes the
+ * key on keydown and the window takes it on keyup, so a press that closes a dialog closes the
+ * window behind it unless the window can tell a dialog was up. `dialogUp` reads this; a flag it
+ * cannot see is a dialog whose Escape still takes the inventory with it, which is exactly what
+ * these two did.
+ *
+ * One pair rather than one per pane, which is what the flags already were in practice:
+ * `InventoryGrid` gated both on `ownPane`, so only the player's own bag ever raised them.
+ */
+export const panels = $state<{ help: boolean; settings: boolean }>({ help: false, settings: false });
+
+export function closePanels() {
+  panels.help = false;
+  panels.settings = false;
+}
+
 /** Clicking the selected slot again clears it, so there is a way out that is not a verb. */
 export function selectSlot(inventory: string, slot: number) {
   if (selection.inventory === inventory && selection.slot === slot) return clearSelection();

@@ -369,10 +369,13 @@ The row's fourth item shipped on 2026-09-05, and the plan that used to sit here 
 built from. `AttachmentPanel.svelte` is no longer a 340px card listing what happens to be fitted
 with an x beside each: it is the gallery's wide `Panel` -- the weapon as the head, a transparent
 stage on the left with the model in it, the point's candidates and all the points as `Row`s on the
-right, `Strip all` and one filled `Fit` in the foot.
+right, `Strip all` and one filled `Fit` in the foot. (The wide panel lasted three days -- see
+*What the live session answered* below, where it becomes a full-screen `Shell` with the bags
+hidden behind it.)
 
 **The stage is a hole and Lua fills it.** `modules/weaponstage/client.lua` is new and is the whole
-of the other half: on open it spawns a `CreateWeaponObject` twelve metres above the player, gives
+of the other half: on open it spawns a `CreateWeaponObject` above the player (twelve metres then,
+three now -- see below), gives
 it the components the slot's metadata says are fitted, and frames it with a scripted camera into
 the rectangle the page reports. The framing arithmetic -- distance and two shifts solved from a
 screen rect, a fill and a field of view -- is `ghst_customs/client/camera.lua`'s, GPL to GPL; the
@@ -420,17 +423,222 @@ and both messages are mirrored in the dev drawer -- `openWeaponStage` and `refre
 the fixture catalogue, and orbit and zoom move the fake dots, because a drag that visibly does
 nothing is indistinguishable from a drag that is not wired up.
 
-**What is left for a live session.** Three things cannot be checked from here:
+**What the live session answered, 2026-09-08.** The three things the section above said could not
+be checked from here were checked, and two of them were wrong in the same direction: the screen was
+too small for the thing it was showing.
 
-1. **Which bones resolve on which models.** Every point falls back to a bounding-box offset, so a
-   missing bone is a dot in roughly the right place rather than a crash -- but roughly is not
-   measured.
-2. **The lift.** Twelve metres straight up keeps the backdrop to sky and keeps the object with the
-   player; indoors it is a ceiling.
-3. **Legibility through the panel.** The gallery draws the stage inside the panel's plane, and a
-   child cannot subtract its parent's background, so the model is read through `--surface-panel`'s
-   translucency. If that is too dark in game the fix is a lighter surface behind the stage, not a
-   second panel.
+1. **A weapon in the bag never had a model.** `CreateWeaponObject` returns 0 for a weapon whose
+   asset is not streamed in, and nothing in the resource was streaming one — so the only weapon the
+   screen could draw was the one in the player's hands, whose model is loaded by definition.
+   Everything else fell straight through to "The weapon cannot be shown here", with no error,
+   because a 0 from that native is a return value. `modules/weaponstage`'s `stream()` now takes the
+   asset through `lib.requestWeaponAsset` first, which is why `Stage.start` yields and why both of
+   its callers hand it a thread.
+2. **The shot was mirrored.** The camera's right-hand vector was `(cos yaw, sin yaw)`; a camera
+   standing at heading `yaw` *from* the model looks back along `(sin yaw, -cos yaw)`, whose right
+   hand is the negative of that. The aim shifted the wrong way and the model landed reflected about
+   the centre of the screen — outside its own stage, with the dots drawn past 100% of the element
+   they are positioned inside. What a player saw was an empty rectangle over a distant camera
+   angle, which reads as the camera being in the wrong place rather than the aim, and that is how
+   it was reported.
+3. **The lift was twelve metres and is now three.** Twelve only reads as sky *outdoors*; indoors it
+   is inside the ceiling slab or above it and outside the interior's rooms, where the game culls
+   what it draws. It is also not what keeps the backdrop out of shot — the framing is, and on a
+   full-screen stage the solved camera distance is about two metres. Just clear of the ped is the
+   only value that behaves the same in a garage as it does on a street.
+4. **Everything past the player's first empty slot read "Not in your bag".** `carried()` walked
+   `PlayerData.inventory` with `#` and a numeric loop, and that table is keyed by slot with a nil
+   for an empty one — `#` on a sparse table is any border the implementation likes, so a gap at
+   slot 4 ended the walk at 3. `pairs` now.
+
+**And the panel became a screen.** Point 3 of the old list — legibility through the panel's own
+plane — was real, and the answer was not a lighter surface. Three things followed from being a
+`wide` panel centred over the two bags:
+
+- The hole was a quarter of the screen wide, and Lua solves the camera distance *from* that
+  rectangle, so the shot was eleven metres off a rifle: distant, high and wide-angle with the model
+  a thumbnail in the middle of it.
+- The one thing on the screen that is genuinely behind the page was being read through two
+  translucent layers and the inventory underneath.
+- Seven dot labels over a 440px rectangle is a pile.
+
+So `Inventory.svelte` hides `.wrapper` while the screen is up — `display: none`, not an `{#if}`, so
+the grids keep their component state and a bag scrolled halfway down is still that way on the way
+back — and `AttachmentPanel.svelte` is now a `Shell` at `place="fill"`: the stage is the viewport
+less one 340px rail, the weapon is named on an ambient plate over it, and the rows and the two
+verbs are in the rail's `Panel`. The scrim went with the outer panel, because a click on the empty
+part of this screen is a *drag to orbit* and click-outside-to-close cannot share an element with
+it; Escape is the way back and the hint plate says so.
+
+**The blur is suspended, not dropped.** `TriggerScreenblurFadeIn` is the only thing that can blur
+the game behind a translucent pane, and it blurs the weapon too. Every other surface in this
+resource wants that — the panes are read against the world and the world is not the content — and
+this one is the exception, so `Utils.blurSuspend`/`blurResume` lend the inventory's single
+`lib.screenBlur` hold out for the duration rather than releasing it. Held as a lend because
+`client.closeInventory` calls `blurOut` on a path the module cannot see the ordering of; the two
+flags in `modules/utils` make either order come out the same. (The flags stayed; the ordering did
+not have to — see the next section.)
+
+**The second live session, same day.** With a model finally on the stage, five more things showed
+up — and the two that mattered most were both the framing rather than the camera.
+
+1. **The height term was solving for a rifle stood on end.** `distance` is the larger of what the
+   width needs and what the height needs, and the height term was `max(size.z, size.x)` — the
+   weapon's *length*, in the vertical, which is only true looking straight down. At the resting
+   pitch of eight degrees it asked for a metre of headroom on a stage holding a gun 30cm tall, so
+   the height term won every time and stood the camera about fifty per cent further back than the
+   shot needed: `fill` said 60% of the stage and the weapon drew at about 35%, in the middle of a
+   lot of scenery. It is now `size.z * cos(pitch) + reach * sin(pitch)` — what the model actually
+   spans vertically at the angle it is being looked at, which is the length only when the shot is
+   top-down. `ghst_customs` avoids the whole question by solving from the free band's width alone;
+   the term stays here because this stage can be short and wide, but it now measures something.
+2. **`offset` was three axes and one of them was wrong.** The fallback anchors were `{x, y, z}`
+   fractions of the bounding box with every point's x pinned at 0.5 and the barrel assumed to run
+   along y. On the Special Carbine MK2 it runs along **x**, so all four points that fall back to an
+   offset — barrel and skin always, magazine and flashlight when their bones do not resolve —
+   landed at the same place along the gun and drew as one stack of overlapping labels on the
+   receiver. It is `{ along, across, up }` now, and `measure()` resolves which axis `along` is (the
+   longer of x and y) and which way it runs (from a nose bone: `gun_muzzle`, `WAPSupp`, `WAPFlsh`)
+   once per weapon. Nothing to maintain per model, and a pistol reads the same as a sniper.
+3. **One label at a time.** Even with the anchors right, seven captions on a metre of gun collide.
+   The dot is always drawn; the name belongs to the point selected or under the cursor, and the
+   rail's `All points` list is where all seven live with what is fitted to each. The dot also sits
+   *on* its anchor now: the label used to be a flex sibling, so `translate(-50%)` centred the dot
+   and the caption together and the dot ended up half a word to the left of the thing it marked.
+4. **A cyan ring round the whole screen after an alt-tab.** `role="dialog"` needs a `tabindex` to
+   satisfy `a11y_interactive_supports_focus`, and a `tabindex="-1"` element is focusable *by
+   click* — so dragging the stage made this viewport-sized element the active one, and alt-tabbing
+   back put Chromium in keyboard modality and drew `base.css`'s `:focus-visible` ring on it. It is
+   a named `<section>` now: it stopped being a dialog when the bags stopped being behind it.
+5. **One Escape did two things.** Every dialog here takes Escape on **keydown** and the window
+   takes it on **keyup**, so a single press closed the attachments screen and then the inventory it
+   had just returned to. `stopPropagation` in the dialog cannot reach that — it is a different
+   event — and the dialogs' comments claiming "this is on top, so it wins" were true only of the
+   keydown half. Worse, the two closes racing put a `TriggerScreenblurFadeIn` and a
+   `TriggerScreenblurFadeOut` on the same frame and left the blur on an empty screen for the rest
+   of the session. `Inventory.svelte` now latches the press where the ambiguity is: a dialog up at
+   keydown spends the matching keyup. **`SettingsPanel` and `UsefulControls` were not covered** —
+   they held their own `open` state inside `InventoryGrid` rather than in `lib/ui.svelte.ts`, so
+   `dialogUp` could not see them and Escape on either closed the window underneath as well. They
+   are `panels.help` and `panels.settings` in the store now. That is not a bigger store for its
+   own sake: `ownPane` still decides which grid *mounts* them, and what it cannot decide is
+   whether the window is allowed to know one is up. Moving them also closed a hole they had on
+   their own — state owned by a pane outlived the window that raised it, so `dismissAll` never
+   cleared them and reopening the bag could find a sheet still open. It clears them now.
+
+**And the ordering that made the blur stick is gone as well.** `client.closeInventory` now calls
+`Stage.stop(true)` itself, immediately before `Utils.blurOut()`, instead of waiting for the page's
+`closeWeaponStage` to arrive a frame later on either side of it. `true` means *drop* the borrowed
+hold rather than hand it back, so the count balances with no fade crossing another. The module's
+old note — that watching the inventory from here would be a second answer to the same question —
+was about *watching*; a call from the owner is the same answer with a known order.
+
+**The player is out of the shot.** The weapon object floats three metres above the ped, which keeps
+it out of the furniture and travels with the player, but the camera orbits and pitches and a shot
+down onto the gun is a shot of the player standing under it. The ped is hidden locally while the
+screen is up — a render flag on this client, the same thing `ghst_customs` does to the driver it is
+sitting inside — and restored by `teardown`.
+
+**Fitting a part no longer flashes.** A fit rebuilds the model, and the rebuild used to take the
+camera and the ped's visibility with it: `RenderScriptCams(false)` and back, once per part, which
+is a frame or two of the player's own gameplay camera and their own body. `teardown` now keeps both
+when it is told a model is about to replace this one, and `Stage.start` reuses whatever survived.
+
+**Fitting a part closed the screen, and the reason was two files away.** Components carry a
+`usetime` -- 2500ms on most of them -- so `useItem` runs `lib.progressBar`, which sets
+`LocalPlayer.state.invBusy` for its duration. `client.lua` mirrors that into a local through a
+statebag handler, and the open-inventory watchdog runs `canOpenInventory()` every 100ms and closes
+the window when it answers no. `invBusy` is one of the things it answers no to. So pressing `Fit`
+put the player back in the world a tenth of a second later, before the part was even on the gun.
+
+That rule is right for every ordinary item -- use a bandage from the bag and the bag should get out
+of the way -- so it is not the rule that changed. `canOpenInventory` takes an `ignoreBusy` now, the
+watchdog passes `Stage.isOpen()`, and every other reason still closes the window: death, cuffs, the
+pause menu, walking away from a stash. The weapon timer is deliberately outside the exemption,
+because that one moves when the player equips something, which *is* a reason to leave.
+
+`Stage.isOpen` is a third piece of state and had to be: `slot` and `object` are both nil for the
+frame or two a rebuild takes, and a watchdog that sampled either of those during a fit would close
+the screen for the same reason with an extra step. It is written by the page's open and close and
+by nothing in between.
+
+**And `All points` was flush against the panel's edge** while every row under it was inset. The
+caption takes `Row`'s whole leading box now -- `--row-pad-x` plus the transparent `border-left`
+each row carries so the selected one can turn it into an accent bar -- rather than adding the two
+widths up, because a raw pixel inside a padding is a spacing value off the scale and
+`check-tokens.mjs` is right to refuse it.
+
+**"The attachments only load after you have equipped the weapon once."** `RequestWeaponAsset`'s
+last argument is `ExtraWeaponComponentFlags` and `ox_lib` defaults it to `0` —
+`WEAPON_COMPONENT_NONE`. So the base weapon model streamed and not one component model came with
+it: `GiveWeaponComponentToWeaponObject` succeeded, drew nothing, and the gun stood on the stage
+bare while the rail correctly listed a scope, a suppressor, a barrel, a flashlight, a grip and an
+extended clip as fitted. Equipping the weapon once was the workaround and also the tell — putting
+the gun in the ped's hands makes the game load the components it is wearing, and they are still
+resident when the screen next opens, so the fault looked like caching and was a request that never
+asked. `stream()` passes `1|2|4|8|16` now, and issues the request *ahead of* the
+`HasWeaponAssetLoaded` short-circuit: that native answers for the weapon, and a base model
+something else already loaded answers true with no component models behind it.
+
+**And the barrel went missing on an MK2 with no barrel upgrade.** `CreateWeaponObject`'s
+`bCreateDefaultComponents` was `false`, on the reasoning that the gun should wear exactly what the
+slot's metadata says and that a default clip added on top would draw a magazine nobody fitted. That
+reads well and it is the wrong model of what a component is on an MK2 weapon: **the default barrel
+is one.** So is the default clip and the default sight. They are not attachments the player chose —
+they are the gun — and refusing them builds a rifle with no barrel on it. `data/weapons.lua` cannot
+put it back either: it has an item only for `COMPONENT_AT_*_BARREL_02`, the heavy one, and none at
+all for `_BARREL_01`, so there is no metadata entry that could name the standard barrel. It is
+`true` now. Fitted parts still win, because GTA's component slots are mutually exclusive and the
+extended clip replaces the default clip rather than sitting beside it.
+
+**And the first report line came back, so the guessing is over.** On a Carbine Rifle MK2, in game
+on 2026-09-08:
+
+    weapon stage WEAPON_CARBINERIFLE_MK2 -- axis +x size 0.64/0.06/0.19
+      -- bone: sight=WAPScop muzzle=WAPSupp flashlight=WAPFlshLasr grip=WAPGrip magazine=WAPClip
+      | box: barrel skin
+
+Four things, none of which was knowable from a screenshot:
+
+1. **The long axis really is x**, solved at runtime, and the muzzle really is at `+x`. The
+   axis-agnostic `frame` was not defensive coding; it was the answer.
+2. **`WAPFlshLasr` is the flashlight bone and `WAPFlsh` is not.** The spelling this file shipped
+   with never resolved on anything, so the flashlight dot had been falling back to the box since
+   the day it was written — which is half of the label pile-up that started this.
+3. **All five mount bones resolve**, so `barrel` and `skin` alone use the box. That is by design:
+   neither names a bone in any GTA weapon model, and a paint job has nowhere else to sit than the
+   receiver.
+4. **`WAPSupp` won the muzzle** because it was first in the list, and `gun_muzzle` was behind it.
+   They are not the same place: `WAPSupp` is where a suppressor *mounts*, which on a shrouded
+   barrel is back under the handguard, and `gun_muzzle` is the end of the barrel. The point is
+   called muzzle and a player looks for it at the sharp end, so the tip is tried first now.
+
+The report line carries **where each dot landed** as well, as a fraction of the gun on the same
+0-is-the-butt scale `POINTS` writes its fallbacks in — `muzzle=gun_muzzle@0.98`. A misplaced dot
+stops being something to squint at in a screenshot and becomes a number to compare with the row
+that produced it. A bone name is only ever a guess that the name means what it sounds like, and
+whether a given mount sits where a player expects is per model and unknowable from here.
+
+**Which bones resolve on which models is now REPORTED rather than guessed**, and the reason is a
+retraction. This document said, on the strength of dot positions read off a screenshot, that
+`WAPScop`/`WAPSupp`/`WAPGrip` resolved on the Special Carbine MK2 while `WAPClip`/`WAPFlsh` did
+not. That was an inference, and it does not survive its own arithmetic: under the old offsets
+`flashlight` sat at `z = 0.30` and `magazine` at `z = 0.00`, so a flashlight *falling back to the
+box* had to draw above the magazine — and in the screenshot it drew below it. At least one of the
+two was on a real bone. The weapon in that shot had both an extended clip and a tactical flashlight
+fitted, which makes that the likely reading.
+
+So `report()` prints one line per weapon per session naming, for every point, the bone that won or
+the fact that it fell back to the box. `lib.print.info`, the same shape as the two other one-off
+diagnostics in this resource. A dot in the wrong place looks exactly like a dot in the right place
+until somebody who knows the weapon looks at it, and a bone name that hit and one that missed are
+one console line apart and indistinguishable on screen.
+
+The candidate lists are wider too, because a lookup costs a hash and being wrong costs a wrong dot:
+`WAPScop_2`, `WAPSupp_2`, `WAPGrip_2`, `WAPClip_2`, and `WAPFlshLasr` — the flashlight mount is
+usually written with the laser it shares, which is the spelling this file did not carry. There is
+no way to shorten this to a fact from inside the game: `GetEntityBoneIndexByName` answers
+name-to-index and GTA V has no index-to-name, so a model's bone list cannot be enumerated.
 
 ## Where the backlog lives
 

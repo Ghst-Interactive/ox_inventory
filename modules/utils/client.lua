@@ -309,6 +309,9 @@ end
 ]]
 local blurred = false
 
+--- Whether the one hold is currently lent out -- see `Utils.blurSuspend`.
+local suspended = false
+
 function Utils.blurIn()
     if blurred then return end
 
@@ -320,7 +323,45 @@ function Utils.blurOut()
     if not blurred then return end
 
     blurred = false
+
+    --- The hold was already given back by a suspend, so there is nothing to release -- releasing
+    --- again would take a *second* resource's blur down with it. Clearing the flag here is what
+    --- makes the two orderings equivalent: whichever of `blurOut` and `blurResume` runs first, the
+    --- other becomes a no-op.
+    if suspended then
+        suspended = false
+        return
+    end
+
     lib.screenBlur(false, 250)
+end
+
+--[[
+    THE ONE SURFACE IN THIS RESOURCE WHOSE CONTENT IS BEHIND THE PAGE.
+
+    The blur exists because the panes are translucent and read against the world; the world is
+    backdrop, not content, and a blurred backdrop is the point. The weapon attachments screen
+    inverts that -- `modules/weaponstage` puts a real weapon object in the frame and leaves the
+    page open over it, so the subject of the screen is a thing the post-process is blurring.
+
+    Suspend rather than `blurOut`: the hold is the inventory's and this borrows it. `blurred` is
+    left standing so `blurResume` knows whether there was one to give back, which is what makes
+    this safe against the inventory closing underneath -- `client.closeInventory` calls `blurOut`
+    on a path this cannot see the ordering of, and the flags above settle it either way.
+]]
+function Utils.blurSuspend()
+    if not blurred or suspended then return end
+
+    suspended = true
+    lib.screenBlur(false, 100)
+end
+
+function Utils.blurResume()
+    if not suspended then return end
+
+    suspended = false
+
+    if blurred then lib.screenBlur(true, 100) end
 end
 
 --[[

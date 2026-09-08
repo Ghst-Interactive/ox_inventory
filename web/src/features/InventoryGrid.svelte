@@ -6,6 +6,7 @@
   import { items as itemDefs, locale } from '../lib/state.svelte';
   import { InventoryType, type Inventory, type Slot } from '../typings';
   import { tidy } from '../lib/tidy';
+  import { panels } from '../lib/ui.svelte';
   import EmptyState from '../lib/EmptyState.svelte';
   import Field from '../lib/Field.svelte';
   import Icon from '../lib/Icon.svelte';
@@ -72,9 +73,12 @@
     queueMicrotask(() => field?.querySelector('input')?.focus());
   }
 
-  /** Global, so only on your own pane: one inventory is open and these two panels are about it. */
-  let helpOpen = $state(false);
-  let settingsOpen = $state(false);
+  /*
+   * The two panels' open state lives in `lib/ui.svelte.ts` now, not here — see `panels` there.
+   * `ownPane` still decides which grid *mounts* them, which is the half that was always about this
+   * component; what they cannot be is invisible to the window, which has to know a dialog is up to
+   * keep Escape from closing it as well.
+   */
   const ownPane = $derived(
     inventory.type === InventoryType.PLAYER && inventory.id === inv.leftInventory.id,
   );
@@ -361,8 +365,8 @@
 </script>
 
 {#if ownPane}
-  <UsefulControls bind:open={helpOpen} />
-  <SettingsPanel bind:open={settingsOpen} />
+  <UsefulControls bind:open={panels.help} />
+  <SettingsPanel bind:open={panels.settings} />
 {/if}
 
 <div class="w-bag">
@@ -416,14 +420,14 @@
     {#if ownPane}
       <Button
         variant="ghost"
-        onclick={() => (helpOpen = true)}
+        onclick={() => (panels.help = true)}
         label={locale.ui_usefulcontrols || 'Controls'}
       >
         <Icon node={Info} size="14px" />
       </Button>
       <Button
         variant="ghost"
-        onclick={() => (settingsOpen = true)}
+        onclick={() => (panels.settings = true)}
         label={locale.ui_settings || 'Settings'}
       >
         <Icon node={Settings} size="14px" />

@@ -210,8 +210,11 @@
    * whole job of a bar you glance at mid-fight.
    */
   .slot:not(.filled) {
+    /* The tint is the whole recess, and that is deliberate. `opacity: 0.45` here dimmed the plane
+       and the `--ink-scrim` this file argues for two rules up -- including the one thing in an
+       empty slot that is not decoration, the number you press it by. An empty slot already reads
+       as empty: no art, no label, no count, and a sunken fill where the others carry the plane. */
     background-color: var(--tint-sunken);
-    opacity: 0.45;
   }
 
   /*
