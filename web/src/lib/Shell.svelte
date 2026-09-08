@@ -246,6 +246,32 @@
     pointer-events: auto;
 
     /*
+     * UNDER THE CONTENT, AND THE NEGATIVE IS LOAD-BEARING.
+     *
+     * This file's header claimed the veil "is painted *under* the content and claims its own
+     * clicks, so a panel sitting on it is unaffected". It was not. The veil is POSITIONED and
+     * `.chrome`, `.content` and `.feet` are ordinary in-flow flex items, and CSS paints positioned
+     * descendants (even at `z-index: auto`) above non-positioned block-level ones whatever the DOM
+     * order says. So a full-screen transparent div sat on top of every panel this component has
+     * ever framed, and swallowed every click and every wheel event aimed at one.
+     *
+     * `z-index: 0` does not fix it -- that still paints in the positioned pass. Only a negative
+     * index moves it into the pass BEFORE in-flow block content, which is what "under" has to mean.
+     * `.shell` is `position: fixed` and therefore its own stacking context, so the -1 is contained:
+     * the scrim cannot fall behind the page, and it still catches the clicks in the gaps around the
+     * content, which is what `onscrim` is for.
+     *
+     * Found 2026-09-08 in the template's kit reference -- an unclickable tab strip over an
+     * unscrollable panel, both from this one line. It was not new. Two callers had already worked
+     * around it locally without naming it: `ox_inventory`'s `CountDialog` carries
+     * `position: relative; z-index: 80` on its plate and its `AttachmentPanel` carried a `90`,
+     * which is exactly the shape of a fix applied to the symptom. The two that had not --
+     * `ghst_admin`'s build panel and its command palette, both `scrim="light"` over an unpositioned
+     * wrapper -- could not be clicked at all.
+     */
+    z-index: -1;
+
+    /*
      * A SCRIM ARRIVES; IT DOES NOT APPEAR. A dim that cuts in on one frame reads as the page
      * flickering, and every resource that hand-rolled one had reached the same conclusion --
      * `ghst_multichar`'s carried `ghst-fade-in` and all four of `ox_inventory`'s dialogs carry a
