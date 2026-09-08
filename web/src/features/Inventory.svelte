@@ -271,13 +271,21 @@
 {/if}
 
 <style>
-  /* Fixed to the viewport corner, same edge the tree's other ambient plates hold —
-     never inside `.wrapper`, whose padding answers the dev drawer rather than the
-     screen edge. */
+  /*
+   * Fixed to the viewport corner, same edge the tree's other ambient plates hold — never inside
+   * `.wrapper`, whose padding answers the dev drawer rather than the screen edge.
+   *
+   * THE SECOND CLAUSE WAS TRUE AND THE FIRST WAS NOT, until 2026-09-08. This held `--space-4`,
+   * which is 16px on `--ui-px`; the plates it names — `ox_lib`'s textUI and hint cluster,
+   * `ghst_multichar`'s — hold `--edge-x` / `--edge-y`, which are a proportion of the DISPLAY and
+   * deliberately not of the interface size. So this one sat four pixels in from the rest at scale
+   * 1 and walked further out every time a player turned the UI up, which is the failure the token
+   * exists to prevent: an inset from a physical screen edge must not move when the type does.
+   */
   .hint-plate {
     position: fixed;
-    left: var(--space-4);
-    bottom: var(--space-4);
+    left: var(--edge-x);
+    bottom: var(--edge-y);
     z-index: 60;
   }
 
