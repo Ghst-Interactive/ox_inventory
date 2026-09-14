@@ -71,11 +71,19 @@
     letter-spacing: var(--tracking-label);
     text-align: left;
     text-transform: uppercase;
-    transition: color var(--dur-fast) var(--ease-out);
+    transition:
+      color var(--dur-fast) var(--ease-out),
+      background-color var(--dur-fast) var(--ease-out);
   }
 
   .head:hover {
     color: var(--color-white);
+  }
+
+  /* Pressed: the header is the fold's one control, and a toggle that gives nothing back while it is
+     held reads as a label that happened to be clicked. */
+  .head:active {
+    background-image: var(--layer-pressed);
   }
 
   .title {

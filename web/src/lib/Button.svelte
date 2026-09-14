@@ -91,7 +91,15 @@
     transition:
       border-color var(--dur-fast) var(--ease-out),
       background-color var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out);
+      color var(--dur-fast) var(--ease-out),
+      transform var(--dur-fast) var(--ease-out);
+  }
+  /* PRESSED, which every state here had except the one a click is. `--layer-pressed` is the
+     system's pressed wash, declared in `theme/tokens.css` beside hover and used almost nowhere until
+     2026-09-13 -- so a click on this lit on hover and then did nothing while the button was down. */
+  .btn:active:not(:disabled) {
+    /* One pixel of travel, the same the key glyph takes: a press is something that moves. */
+    transform: translateY(1px);
   }
   .btn:disabled {
     cursor: not-allowed;
@@ -105,6 +113,9 @@
   }
   .neutral:hover:not(:disabled) {
     border-color: var(--color-primary);
+  }
+  .neutral:active:not(:disabled):not(.on) {
+    background-image: var(--layer-pressed);
   }
   .neutral:disabled {
     color: var(--color-dim);
@@ -122,6 +133,12 @@
   .filled:hover:not(:disabled),
   .neutral.on:hover:not(:disabled) {
     background-image: linear-gradient(rgba(4, 37, 43, 0.08), rgba(4, 37, 43, 0.08));
+  }
+  /* Pressed is the same ink wash, doubled: hover to pressed is 0.06 to 0.12 on the neutral layers,
+     and the ink wash follows the same step. */
+  .filled:active:not(:disabled),
+  .neutral.on:active:not(:disabled) {
+    background-image: linear-gradient(rgba(4, 37, 43, 0.16), rgba(4, 37, 43, 0.16));
   }
   .filled:disabled,
   .neutral.on:disabled {
@@ -141,6 +158,9 @@
   .ghost:hover:not(:disabled) {
     background-image: var(--layer-hover);
     color: var(--color-white);
+  }
+  .ghost:active:not(:disabled) {
+    background-image: var(--layer-pressed);
   }
   .ghost.on {
     color: var(--color-primary);

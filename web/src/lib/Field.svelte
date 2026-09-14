@@ -310,4 +310,10 @@
     background-image: var(--layer-hover);
     color: var(--color-white);
   }
+
+  /* Pressed. The field itself answers a click with focus -- the rail and the wash above -- so the
+     clear button is the one part of it that is pressed rather than entered. */
+  .clear:active {
+    background-image: var(--layer-pressed);
+  }
 </style>

@@ -139,6 +139,12 @@
     background-image: var(--layer-hover);
     color: var(--color-white);
   }
+  /* PRESSED, which every state here had except the one a click is. `--layer-pressed` is the
+     system's pressed wash, declared in `theme/tokens.css` beside hover and used almost nowhere until
+     2026-09-13 -- so a step lit on hover and then did nothing while the button was down. */
+  button:active:not(:disabled) {
+    background-image: var(--layer-pressed);
+  }
   button:disabled {
     color: var(--color-dim);
     opacity: 0.4;

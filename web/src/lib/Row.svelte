@@ -7,12 +7,16 @@
    * across a NUI resource boundary — each `web/` is its own bundle — so a resource that draws a
    * list carries this file and `Tools/checks/copies.py` holds the copies to byte identity.
    *
-   * **Authored in `ox_lib`, which is a licence decision and not a filing one.** ox_lib is LGPL and
-   * every `ghst_*` is GPL, so a component written here reaches all of them plus `ox_inventory`;
-   * one written in the GPL template can never come back the other way. `ChoiceRow` and
-   * `StatTable` live in the template and are stuck at 21 of 22 resources for exactly that reason;
-   * `Button` was too, until the dialogs needed it and it was rewritten here (2026-09-05).
-   * `ox_target` is MIT and stays outside the kit — it has one button and no lists.
+   * **Edited in the template, and no longer carried by `ox_lib`.** It was written in ox_lib, which
+   * was a licence decision and not a filing one: ox_lib is LGPL and every `ghst_*` is GPL, so a
+   * component written there reached all of them plus `ox_inventory`, and one written in the GPL
+   * template can never go back the other way. On 2026-09-13 ox_lib's web was held to upstream's
+   * own screens (`txData/ghst_sv/docs/ox-lib-ui.md`), and this file left it with the eleven others
+   * none of those screens draws -- so it is edited here now, and can never return to ox_lib.
+   *
+   * The routing still holds for what stayed. `Button`, `Panel`, `KeyGlyph`, `KeyHints`, `Rhombus`
+   * and `Calendar` are drawn by ox_lib's own dialogs, notifications and textUI, so a change to
+   * any of them is made in ox_lib first and copied out, never the other way.
    *
    * ## Why this exists when `ChoiceRow` already does
    *
@@ -173,6 +177,17 @@
   .hit-only:hover:not(:disabled) {
     background-image: var(--layer-hover);
     color: var(--color-white);
+  }
+
+  /* PRESSED, which every state here had except the one a click is. `--layer-pressed` is the
+     system's pressed wash, declared in `theme/tokens.css` beside hover and used almost nowhere until
+     2026-09-13 -- so a row lit on hover and then did nothing while the button was down. */
+  /* The row, when its own hit button is the thing pressed -- not when a `trailing` control on top of
+     it is, which is a different action and must not look like choosing the row. `:has()` resolves on
+     CEF 103 with experimental features on; see `cef-103-ceiling`. */
+  .row:has(> .hit:active):not(.disabled),
+  .hit-only:active:not(:disabled) {
+    background-image: var(--layer-pressed);
   }
 
   /*
